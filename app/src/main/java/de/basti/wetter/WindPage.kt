@@ -7,18 +7,22 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Point
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.view.Choreographer
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.events.MapListener
@@ -31,6 +35,7 @@ import org.osmdroid.views.overlay.Overlay
 import java.util.Calendar
 import java.util.Locale
 import java.util.Random
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
@@ -39,31 +44,36 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** Windfeld auf einem regelmäßigen Längen-/Breitengitter, stündlich. */
+/** Wetterfelder auf einem regelmäßigen Längen-/Breitengitter, stündlich. */
 class WindGrid(
     val south: Double, val north: Double, val west: Double, val east: Double,
     val nx: Int, val ny: Int,
     val times: LongArray,
-    val u: Array<FloatArray>,   // [Stunde][j * nx + i], km/h nach Osten
-    val v: Array<FloatArray>    // km/h nach Norden
+    val u: Array<FloatArray>,       // [Stunde][j * nx + i], km/h nach Osten
+    val v: Array<FloatArray>,       // km/h nach Norden
+    val gust: Array<FloatArray>,    // Böen km/h
+    val thunder: Array<FloatArray>  // Gewitter-Potenzial (Blitz-Potenzial bzw. aus CAPE abgeleitet)
 ) {
-    /** Bilinear interpolierter Wind (u, v) an einer Position; null außerhalb. */
-    fun at(h: Int, lat: Double, lon: Double, out: FloatArray): Boolean {
+    /** Bilinear interpolierter Wert eines Feldes; NaN außerhalb. */
+    fun sample(field: Array<FloatArray>, h: Int, lat: Double, lon: Double): Float {
         val fx = (lon - west) / (east - west) * (nx - 1)
         val fy = (north - lat) / (north - south) * (ny - 1)
-        if (fx < 0 || fy < 0 || fx > nx - 1 || fy > ny - 1) return false
+        if (fx < 0 || fy < 0 || fx > nx - 1 || fy > ny - 1) return Float.NaN
         val i = min(floor(fx).toInt(), nx - 2)
         val j = min(floor(fy).toInt(), ny - 2)
         val tx = (fx - i).toFloat()
         val ty = (fy - j).toFloat()
-        val uu = u[h]; val vv = v[h]
-        fun lerp(arr: FloatArray): Float {
-            val a = arr[j * nx + i] * (1 - tx) + arr[j * nx + i + 1] * tx
-            val b = arr[(j + 1) * nx + i] * (1 - tx) + arr[(j + 1) * nx + i + 1] * tx
-            return a * (1 - ty) + b * ty
-        }
-        out[0] = lerp(uu)
-        out[1] = lerp(vv)
+        val arr = field[h]
+        val a = arr[j * nx + i] * (1 - tx) + arr[j * nx + i + 1] * tx
+        val b = arr[(j + 1) * nx + i] * (1 - tx) + arr[(j + 1) * nx + i + 1] * tx
+        return a * (1 - ty) + b * ty
+    }
+
+    fun at(h: Int, lat: Double, lon: Double, out: FloatArray): Boolean {
+        val uu = sample(u, h, lat, lon)
+        if (uu.isNaN()) return false
+        out[0] = uu
+        out[1] = sample(v, h, lat, lon)
         return true
     }
 
@@ -92,7 +102,7 @@ class WindGrid(
                 lons.append("%.3f".format(Locale.US, lon))
             }
             val url = "https://api.open-meteo.com/v1/forecast?latitude=$lats&longitude=$lons" +
-                "&hourly=wind_speed_10m,wind_direction_10m&models=icon_seamless" +
+                "&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,lightning_potential,cape&models=icon_seamless" +
                 "&forecast_hours=48&timeformat=unixtime&timezone=GMT"
             val body = Net.get(url, 25000)
             val arr: JSONArray = if (body.trimStart().startsWith("[")) JSONArray(body) else JSONArray().put(JSONObject(body))
@@ -102,19 +112,34 @@ class WindGrid(
             val times = LongArray(nt) { tArr.getLong(it) }
             val u = Array(nt) { FloatArray(nx * ny) }
             val v = Array(nt) { FloatArray(nx * ny) }
+            val g = Array(nt) { FloatArray(nx * ny) }
+            val th = Array(nt) { FloatArray(nx * ny) }
+            fun JSONArray?.f(t: Int): Double = if (this == null || t >= length() || isNull(t)) Double.NaN else optDouble(t, Double.NaN)
             for (k in 0 until min(arr.length(), nx * ny)) {
                 val h = arr.getJSONObject(k).getJSONObject("hourly")
-                val sp = h.getJSONArray("wind_speed_10m")
-                val dir = h.getJSONArray("wind_direction_10m")
+                val sp = h.optJSONArray("wind_speed_10m")
+                val dir = h.optJSONArray("wind_direction_10m")
+                val gu = h.optJSONArray("wind_gusts_10m")
+                val lpi = h.optJSONArray("lightning_potential")
+                val cape = h.optJSONArray("cape")
                 for (t in 0 until nt) {
-                    val speed = if (sp.isNull(t)) 0.0 else sp.getDouble(t)
-                    val from = Math.toRadians(if (dir.isNull(t)) 0.0 else dir.getDouble(t))
+                    val speed = sp.f(t).let { if (it.isNaN()) 0.0 else it }
+                    val from = Math.toRadians(dir.f(t).let { if (it.isNaN()) 0.0 else it })
                     // Richtung = woher der Wind kommt → Bewegung in Gegenrichtung
                     u[t][k] = (-speed * sin(from)).toFloat()
                     v[t][k] = (-speed * cos(from)).toFloat()
+                    g[t][k] = gu.f(t).let { if (it.isNaN()) speed else it }.toFloat()
+                    // Blitz-Potenzial direkt; wo es fehlt (außerhalb Mitteleuropas), grob aus CAPE
+                    val l = lpi.f(t)
+                    val c = cape.f(t)
+                    th[t][k] = when {
+                        !l.isNaN() -> l.toFloat()
+                        !c.isNaN() -> ((c - 300) / 120).coerceAtLeast(0.0).toFloat()
+                        else -> 0f
+                    }
                 }
             }
-            return WindGrid(s, n, w, e, nx, ny, times, u, v)
+            return WindGrid(s, n, w, e, nx, ny, times, u, v, g, th)
         }
     }
 }
@@ -137,16 +162,45 @@ object WindColors {
     val legendColors get() = colors
 }
 
+/** Farbskala für das Gewitter-Potenzial: durchsichtig bei 0, dann gelb → orange → rot → violett. */
+object ThunderColors {
+    private val stops = floatArrayOf(0f, 0.8f, 3f, 10f, 20f)
+    private val colors = intArrayOf(0x00000000, 0xB3F5D547.toInt(), 0xCCFF8A3D.toInt(), 0xE6FF4F4F.toInt(), 0xF2C86BFF.toInt())
+    fun of(v: Float): Int {
+        if (v.isNaN() || v <= 0.15f) return 0
+        if (v <= stops[1]) return Ui.mix(0x00F5D547, colors[1], v / stops[1])
+        for (i in 2 until stops.size) if (v <= stops[i]) {
+            return Ui.mix(colors[i - 1], colors[i], (v - stops[i - 1]) / (stops[i] - stops[i - 1]))
+        }
+        return colors.last()
+    }
+    fun level(v: Float): Int = when {
+        v.isNaN() -> 0
+        v >= 10 -> 3
+        v >= 3 -> 2
+        v >= 0.8f -> 1
+        else -> 0
+    }
+    val legendColors get() = intArrayOf(0x40F5D547, colors[1], colors[2], colors[3], colors[4])
+}
+
 /**
- * Animierte Windkarte: farbige Windstärke-Fläche plus fließende Partikel
- * mit Schweif, die der Strömung folgen.
+ * Animierte Windkarte: farbige Fläche (Wind, Böen oder Gewitter) plus fließende Partikel
+ * mit Schweif; Antippen zeigt die Werte an dieser Stelle.
  */
-class WindOverlay(private val map: MapView, private val density: Float) : Overlay() {
+class WindOverlay(private val map: MapView, private val p: Ui.Palette, private val density: Float) : Overlay() {
+
+    enum class Layer { WIND, GUST, THUNDER }
 
     var grid: WindGrid? = null
         set(v) { field = v; dirty = true }
     var hour = 0
         set(v) { field = v; dirty = true }
+    var layer = Layer.WIND
+        set(v) { field = v; dirty = true }
+    /** Angetippte Stelle (Info-Fähnchen) oder null. */
+    var tapped: GeoPoint? = null
+    var onTap: (() -> Unit)? = null
 
     // Bildschirm-Feld (Geschwindigkeit in Pixel pro Bild)
     private val cell = (14 * density).toInt().coerceAtLeast(8)
@@ -165,15 +219,18 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
     private var py = FloatArray(0)
     private var age = IntArray(0)
 
-    private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 150 }
+    private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeWidth = 1.5f * density
         strokeCap = Paint.Cap.ROUND
         color = Color.WHITE
     }
+    private val bubble = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG)
     private val tmp = FloatArray(2)
     private val src = Rect()
     private val dst = RectF()
+    private val pt = Point()
 
     var running = false
 
@@ -208,7 +265,7 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
         if (fu.size != n) { fu = FloatArray(n); fv = FloatArray(n); fs = FloatArray(n) }
         val pj = map.projection
         val hr = hour.coerceIn(0, g.times.size - 1)
-        // Pixel pro Bild je km/h – konstant über alle Zoomstufen (wie bei bekannten Wetterkarten)
+        // Pixel pro Bild je km/h – konstant über alle Zoomstufen
         val k = 0.028f * density
         val colorsArr = IntArray(n)
         val gp = GeoPoint(0.0, 0.0)
@@ -220,7 +277,11 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
                 fv[i] = -tmp[1] * k
                 val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
                 fs[i] = s
-                colorsArr[i] = WindColors.of(s)
+                colorsArr[i] = when (layer) {
+                    Layer.WIND -> Ui.withAlpha(WindColors.of(s), 135)
+                    Layer.GUST -> Ui.withAlpha(WindColors.of(g.sample(g.gust, hr, geo.latitude, geo.longitude)), 135)
+                    Layer.THUNDER -> ThunderColors.of(g.sample(g.thunder, hr, geo.latitude, geo.longitude))
+                }
             } else {
                 fu[i] = 0f; fv[i] = 0f; fs[i] = Float.NaN
                 colorsArr[i] = 0
@@ -263,16 +324,34 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
         return true
     }
 
-    /** Wind in km/h an einer Bildschirmposition (für die Anzeige in der Mitte). */
-    fun speedAt(x: Float, y: Float): Pair<Float, Float>? {
+    /** Werte an einer Position: Wind km/h, Richtung (woher), Böen km/h, Gewitter-Potenzial. */
+    class Values(val speed: Float, val fromDeg: Float, val gust: Float, val thunder: Float)
+
+    fun valuesAt(geo: GeoPoint): Values? {
         val g = grid ?: return null
-        val geo = map.projection.fromPixels(x.toInt(), y.toInt())
-        if (!g.at(hour.coerceIn(0, g.times.size - 1), geo.latitude, geo.longitude, tmp)) return null
+        val h = hour.coerceIn(0, g.times.size - 1)
+        if (!g.at(h, geo.latitude, geo.longitude, tmp)) return null
         val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
-        // Richtung, aus der der Wind kommt
         var deg = Math.toDegrees(kotlin.math.atan2(-tmp[0].toDouble(), -tmp[1].toDouble())).toFloat()
         if (deg < 0) deg += 360f
-        return s to deg
+        return Values(s, deg, g.sample(g.gust, h, geo.latitude, geo.longitude), g.sample(g.thunder, h, geo.latitude, geo.longitude))
+    }
+
+    override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
+        val t = tapped
+        if (t != null) {
+            mapView.projection.toPixels(t, pt)
+            // Antippen auf das Fähnchen bzw. den Punkt blendet es aus
+            if (abs(pt.x - e.x) < 70 * density && pt.y - e.y in -20 * density..90 * density) {
+                tapped = null
+                onTap?.invoke()
+                return true
+            }
+        }
+        val g = mapView.projection.fromPixels(e.x.toInt(), e.y.toInt())
+        tapped = GeoPoint(g.latitude, g.longitude)
+        onTap?.invoke()
+        return true
     }
 
     override fun draw(c: Canvas, mv: MapView, shadow: Boolean) {
@@ -304,6 +383,70 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
             if (nx < 0 || ny < 0 || nx > w || ny > h) respawn(i, w, h)
         }
         c.drawBitmap(trails!!, 0f, 0f, null)
+
+        // 3) Info-Fähnchen an der angetippten Stelle
+        tapped?.let { drawBubble(c, mv, it) }
+    }
+
+    private fun drawBubble(c: Canvas, mv: MapView, geo: GeoPoint) {
+        val v = valuesAt(geo)
+        mv.projection.toPixels(geo, pt)
+        val x = pt.x.toFloat()
+        val y = pt.y.toFloat()
+        val d = density
+
+        // Punkt
+        bubble.color = 0x66000000
+        c.drawCircle(x, y, 8 * d, bubble)
+        bubble.color = Color.WHITE
+        c.drawCircle(x, y, 6 * d, bubble)
+        bubble.color = p.accent
+        c.drawCircle(x, y, 4 * d, bubble)
+
+        val line1: String
+        val line2: String
+        val line3: String?
+        if (v == null) {
+            line1 = "Keine Daten"; line2 = "an dieser Stelle"; line3 = null
+        } else {
+            line1 = "${v.speed.roundToInt()} km/h aus ${Fmt.dir(v.fromDeg.toDouble())}"
+            line2 = "Böen ${if (v.gust.isNaN()) "–" else v.gust.roundToInt().toString()} km/h"
+            val tl = ThunderColors.level(v.thunder)
+            line3 = if (layer == Layer.THUNDER || tl >= 1) "Gewitterrisiko ${Thunder.NAMES[tl]}" else null
+        }
+        bubbleText.typeface = Ui.TF_MEDIUM
+        bubbleText.textSize = 15 * d
+        val w1 = bubbleText.measureText(line1)
+        bubbleText.typeface = Typeface.DEFAULT
+        bubbleText.textSize = 12.5f * d
+        val w2 = max(bubbleText.measureText(line2), line3?.let { bubbleText.measureText(it) } ?: 0f)
+        val bw = max(w1, w2) + 28 * d
+        val bh = (if (line3 != null) 74 else 56) * d
+        var left = x - bw / 2
+        left = left.coerceIn(8 * d, mv.width - bw - 8 * d)
+        val bottom = y - 14 * d
+        val top = bottom - bh
+        bubble.color = Ui.withAlpha(p.surface, 245)
+        c.drawRoundRect(RectF(left, top, left + bw, bottom), 16 * d, 16 * d, bubble)
+        bubble.style = Paint.Style.STROKE
+        bubble.strokeWidth = 1f
+        bubble.color = p.border
+        c.drawRoundRect(RectF(left, top, left + bw, bottom), 16 * d, 16 * d, bubble)
+        bubble.style = Paint.Style.FILL
+
+        bubbleText.typeface = Ui.TF_MEDIUM
+        bubbleText.textSize = 15 * d
+        bubbleText.color = if (v != null && max(v.speed, v.gust.takeIf { !it.isNaN() } ?: 0f) >= 62) p.warn else p.text
+        c.drawText(line1, left + 14 * d, top + 24 * d, bubbleText)
+        bubbleText.typeface = Typeface.DEFAULT
+        bubbleText.textSize = 12.5f * d
+        bubbleText.color = if (v != null && !v.gust.isNaN() && v.gust >= 62) p.warn else p.muted
+        c.drawText(line2, left + 14 * d, top + 43 * d, bubbleText)
+        if (line3 != null && v != null) {
+            val tl = ThunderColors.level(v.thunder)
+            bubbleText.color = if (tl >= 1) thunderColor(tl, p) else p.muted
+            c.drawText(line3, left + 14 * d, top + 61 * d, bubbleText)
+        }
     }
 
     override fun onDetach(mapView: MapView?) {
@@ -313,7 +456,7 @@ class WindOverlay(private val map: MapView, private val density: Float) : Overla
     }
 }
 
-/** Wind-Seite: animierte Karte, Zeitleiste (48 h), Wert in der Kartenmitte. */
+/** Wind-Seite: animierte Karte, Ebenen Wind/Böen/Gewitter, Zeitleiste (48 h), Werte per Antippen. */
 @SuppressLint("ViewConstructor")
 class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : FrameLayout(ctx) {
 
@@ -324,23 +467,22 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
 
     val map: MapView = MapSupport.createMap(ctx, p, center, 6.0)
     private val d = resources.displayMetrics.density
-    private val overlay = WindOverlay(map, d)
+    private val overlay = WindOverlay(map, p, d)
     private val marker = PlaceMarker(p, d)
     private val timeline = TimelineView(ctx, p)
     private val timeLabel = Ui.tv(ctx, "", 17f, p.text, true)
     private val subLabel = Ui.tv(ctx, "", 12.5f, p.muted)
-    private val readout = Ui.tv(ctx, "", 14f, p.text, true)
+    private val legend = WindLegend(ctx, p)
+    private val layerButtons = ArrayList<TextView>()
     private val main = Handler(Looper.getMainLooper())
     private var fetching = false
     private var lastBox: BoundingBox? = null
-    private var visibleNow = false
 
     private val refetch = Runnable { ensureData() }
 
     init {
         setBackgroundColor(p.bg)
         map.overlays.add(overlay)
-        map.overlays.add(MapSupport.labelsOverlay(ctx, p))
         map.overlays.add(marker)
         marker.point = center
         map.setMaxZoomLevel(10.0)
@@ -349,17 +491,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             override fun onScroll(event: ScrollEvent?): Boolean { changed(); return false }
             override fun onZoom(event: ZoomEvent?): Boolean { changed(); return false }
         })
-
-        // Fadenkreuz in der Mitte
-        addView(object : View(ctx) {
-            private val pt = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * d; color = p.text }
-            override fun onDraw(c: Canvas) {
-                val cx = width / 2f; val cy = height / 2f
-                c.drawCircle(cx, cy, 6 * d, pt)
-                c.drawLine(cx - 14 * d, cy, cx - 9 * d, cy, pt); c.drawLine(cx + 9 * d, cy, cx + 14 * d, cy, pt)
-                c.drawLine(cx, cy - 14 * d, cx, cy - 9 * d, pt); c.drawLine(cx, cy + 9 * d, cx, cy + 14 * d, pt)
-            }
-        }, LayoutParams(dp(32), dp(32), Gravity.CENTER))
+        overlay.onTap = { map.invalidate() }
 
         val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -373,19 +505,28 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
                     addView(timeLabel)
                     addView(subLabel, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
-                addView(WindLegend(ctx, p), LinearLayout.LayoutParams(dp(132), dp(30)))
+                addView(legend, LinearLayout.LayoutParams(dp(132), dp(30)))
             })
             addView(timeline, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
         }
         addView(panel, LayoutParams(MATCH, WRAP, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(12)) })
 
-        addView(LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = Ui.rect(Ui.withAlpha(p.surface, 235), dpf(18), p.border, 1)
-            setPadding(dp(14), dp(9), dp(14), dp(9))
-            addView(Ui.tv(ctx, "Wind (10 m)", 15f, p.text, true))
-            addView(readout, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
-        }, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
+        // Ebenen-Umschalter oben links: Wind | Böen | Gewitter
+        val seg = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        for ((i, name) in listOf("Wind", "Böen", "Gewitter").withIndex()) {
+            val b = Ui.tv(ctx, name, 14f, p.text, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                setOnClickListener { setLayer(WindOverlay.Layer.values()[i]) }
+            }
+            layerButtons.add(b)
+            seg.addView(b, LinearLayout.LayoutParams(WRAP, WRAP))
+        }
+        addView(seg, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
 
         addView(FrameLayout(ctx).apply {
             background = Ui.pressable(p, Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
@@ -393,19 +534,32 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             setOnClickListener { marker.point?.let { map.controller.animateTo(it, 7.0, 500L) } }
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
-        addView(Ui.tv(ctx, "Wind: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Daten: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
         }, LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(18), dp(4)) })
 
         timeline.onChange = { setHour(it) }
+        setLayer(WindOverlay.Layer.WIND)
         map.post { ensureData() }
+    }
+
+    private fun setLayer(l: WindOverlay.Layer) {
+        overlay.layer = l
+        overlay.moved()
+        legend.layer = l
+        for ((i, b) in layerButtons.withIndex()) {
+            val on = i == l.ordinal
+            b.background = if (on) Ui.rect(p.accent, dpf(18)) else Ui.pressable(p, Ui.withAlpha(p.surface, 0), dpf(18))
+            b.setTextColor(if (on) p.onAccent else p.text)
+        }
+        updateSub()
+        map.invalidate()
     }
 
     private fun changed() {
         overlay.moved()
         main.removeCallbacks(refetch)
         main.postDelayed(refetch, 700)
-        updateReadout()
     }
 
     fun setCenter(g: GeoPoint) {
@@ -423,7 +577,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
         val stale = g != null && System.currentTimeMillis() / 1000 - g.times[0] > 3 * 3600
         if (g != null && g.covers(bb) && !zoomedIn && !stale) return
         fetching = true
-        subLabel.text = "Lade Winddaten …"
+        subLabel.text = "Lade Daten …"
         Thread {
             val res = runCatching { WindGrid.fetch(bb) }
             main.post {
@@ -440,7 +594,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
                     setHour(if (keep >= 0) keep else nowIdx)
                     map.invalidate()
                 }.onFailure {
-                    subLabel.text = "Winddaten nicht verfügbar – Internet?"
+                    subLabel.text = "Daten nicht verfügbar – Internet?"
                 }
             }
         }.start()
@@ -460,25 +614,25 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             else -> "in ${((t - now) / 3600.0).roundToInt()} h"
         }
         timeLabel.text = "$day %02d:00  ·  $rel".format(cal.get(Calendar.HOUR_OF_DAY))
-        subLabel.text = "Modell: DWD ICON (D2/EU)"
-        updateReadout()
+        updateSub()
     }
 
-    private fun updateReadout() {
-        val r = overlay.speedAt(map.width / 2f, map.height / 2f)
-        readout.text = if (r == null) "–" else "${r.first.roundToInt()} km/h aus ${Fmt.dir(r.second.toDouble())}"
-        readout.setTextColor(if (r != null && r.first >= 50) p.warn else p.text)
+    private fun updateSub() {
+        if (fetching) return
+        subLabel.text = when (overlay.layer) {
+            WindOverlay.Layer.WIND -> "Mittelwind 10 m  ·  Karte antippen für Werte"
+            WindOverlay.Layer.GUST -> "Böen  ·  Karte antippen für Werte"
+            WindOverlay.Layer.THUNDER -> "Gewitter-Potenzial (Blitz-Index)"
+        }
     }
 
     fun onResume() {
-        visibleNow = true
         map.onResume()
         overlay.start()
         ensureData()
     }
 
     fun onPause() {
-        visibleNow = false
         overlay.stop()
         map.onPause()
     }
@@ -486,23 +640,42 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     fun destroy() { overlay.stop(); map.onDetach() }
 }
 
-/** Legende der Windfarben. */
+/** Legende: Windfarben (km/h) bzw. Gewitterstufen. */
 @SuppressLint("ViewConstructor")
 class WindLegend(ctx: Context, private val p: Ui.Palette) : View(ctx) {
+    var layer = WindOverlay.Layer.WIND
+        set(v) { field = v; invalidate() }
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9.5f * resources.displayMetrics.density; textAlign = Paint.Align.CENTER }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9.5f * resources.displayMetrics.density }
+
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
+        text.color = p.muted
+        if (layer == WindOverlay.Layer.THUNDER) {
+            paint.shader = LinearGradient(0f, 0f, w, 0f, ThunderColors.legendColors, null, Shader.TileMode.CLAMP)
+            c.drawRoundRect(RectF(0f, 4 * d, w, 10 * d), 3 * d, 3 * d, paint)
+            paint.shader = null
+            text.textAlign = Paint.Align.LEFT
+            c.drawText("gering", 0f, 24 * d, text)
+            text.textAlign = Paint.Align.CENTER
+            c.drawText("mäßig", w * 0.5f, 24 * d, text)
+            text.textAlign = Paint.Align.RIGHT
+            c.drawText("hoch", w, 24 * d, text)
+            return
+        }
         val stops = WindColors.legendStops
         val max = stops.last()
         paint.shader = LinearGradient(0f, 0f, w, 0f, WindColors.legendColors, FloatArray(stops.size) { stops[it] / max }, Shader.TileMode.CLAMP)
         c.drawRoundRect(RectF(0f, 4 * d, w, 10 * d), 3 * d, 3 * d, paint)
         paint.shader = null
-        text.color = p.muted
-        for (v in listOf(0, 25, 50, 75, 100)) {
-            val x = (v / max * w).coerceIn(8 * d, w - 10 * d)
-            c.drawText(if (v == 100) "100 km/h" else "$v", if (v == 100) x - 12 * d else x, 24 * d, text)
-        }
+        // Zahlen über der Skala verteilt, Einheit ganz rechts – nichts überlappt
+        text.textAlign = Paint.Align.LEFT
+        c.drawText("0", 0f, 24 * d, text)
+        text.textAlign = Paint.Align.CENTER
+        c.drawText("25", 25 / max * w, 24 * d, text)
+        c.drawText("50", 50 / max * w, 24 * d, text)
+        text.textAlign = Paint.Align.RIGHT
+        c.drawText("100 km/h", w, 24 * d, text)
     }
 }

@@ -27,8 +27,48 @@ class Hour(
     val isDay: Boolean,
     val pressure: Double,     // hPa
     val prob: Double,         // Regenwahrscheinlichkeit % (ECMWF-Ensemble)
-    val fromD2: Boolean       // true = ICON-D2, false = ECMWF IFS
-)
+    val fromD2: Boolean,      // true = ICON-D2, false = ECMWF IFS
+    val cape: Double,         // Gewitterenergie J/kg
+    val lpi: Double,          // Blitz-Potenzial (ICON-D2), J/kg
+    val flashes: Double,      // Blitzdichte (ECMWF), Blitze je km² und Tag
+    val snowDepth: Double,    // Schneehöhe in cm
+    val snowLine: Double      // Schneefallgrenze in m (nur ICON-D2)
+) {
+    /** Gewitterrisiko: 0 = keins, 1 = gering, 2 = mäßig, 3 = hoch. */
+    val thunder: Int by lazy { Thunder.level(this) }
+}
+
+/** Einstufung des Gewitterrisikos aus Blitz-Potenzial, Blitzdichte, CAPE und Wettercode. */
+object Thunder {
+    val NAMES = arrayOf("kein", "gering", "mäßig", "hoch")
+
+    fun level(h: Hour): Int {
+        var lvl = 0
+        if (!h.lpi.isNaN()) {
+            lvl = when {
+                h.lpi >= 10 -> 3
+                h.lpi >= 3 -> 2
+                h.lpi >= 0.8 -> 1
+                else -> 0
+            }
+        } else if (!h.flashes.isNaN()) {
+            lvl = when {
+                h.flashes >= 1.0 -> 3
+                h.flashes >= 0.1 -> 2
+                h.flashes >= 0.01 -> 1
+                else -> 0
+            }
+        } else if (!h.cape.isNaN()) {
+            lvl = when {
+                h.cape >= 1500 && h.precip >= 0.3 -> 2
+                h.cape >= 500 && h.precip >= 0.2 -> 1
+                else -> 0
+            }
+        }
+        if (h.code in 95..99) lvl = maxOf(lvl, if (h.code == 95) 2 else 3)
+        return lvl
+    }
+}
 
 class Day(
     val start: Long,          // lokale Mitternacht als Unix-Sekunden
@@ -44,7 +84,9 @@ class Day(
     val windDir: Double,
     val sunrise: Long,
     val sunset: Long,
-    val fromD2: Boolean
+    val fromD2: Boolean,
+    val thunder: Int,         // höchstes Gewitterrisiko des Tages
+    val snowDepth: Double     // größte Schneehöhe des Tages (cm)
 )
 
 class Forecast(
@@ -148,15 +190,15 @@ object Net {
 object WeatherApi {
     private const val BASE = "https://api.open-meteo.com/v1/forecast"
     private const val VARS = "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,snowfall," +
-        "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day,pressure_msl"
+        "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day,pressure_msl,cape,snow_depth"
 
     private fun loc(p: Place) = "latitude=%.4f&longitude=%.4f".format(Locale.US, p.lat, p.lon)
 
     /** Lädt beide Modelle und gibt die Rohdaten (für den Zwischenspeicher) zurück. */
     fun fetchRaw(p: Place): String {
-        val ecUrl = "$BASE?${loc(p)}&models=ecmwf_ifs&hourly=$VARS,precipitation_probability" +
+        val ecUrl = "$BASE?${loc(p)}&models=ecmwf_ifs&hourly=$VARS,precipitation_probability,lightning_density" +
             "&daily=sunrise,sunset&forecast_days=16&past_hours=1&timeformat=unixtime&timezone=auto"
-        val d2Url = "$BASE?${loc(p)}&models=icon_d2&hourly=$VARS" +
+        val d2Url = "$BASE?${loc(p)}&models=icon_d2&hourly=$VARS,lightning_potential,snowfall_height" +
             "&minutely_15=precipitation&forecast_minutely_15=12" +
             "&forecast_hours=48&past_hours=1&timeformat=unixtime&timezone=auto"
 
@@ -213,12 +255,14 @@ object WeatherApi {
         val eSnow = e.a("snowfall"); val eCode = e.a("weather_code"); val eCloud = e.a("cloud_cover")
         val eWind = e.a("wind_speed_10m"); val eDir = e.a("wind_direction_10m"); val eGust = e.a("wind_gusts_10m")
         val eDay = e.a("is_day"); val ePres = e.a("pressure_msl"); val eProb = e.a("precipitation_probability")
+        val eCape = e.a("cape"); val eSnowD = e.a("snow_depth"); val eFlash = e.a("lightning_density")
 
         val dTemp = d.a("temperature_2m"); val dFeels = d.a("apparent_temperature")
         val dHum = d.a("relative_humidity_2m"); val dPr = d.a("precipitation")
         val dSnow = d.a("snowfall"); val dCode = d.a("weather_code"); val dCloud = d.a("cloud_cover")
         val dWind = d.a("wind_speed_10m"); val dDir = d.a("wind_direction_10m"); val dGust = d.a("wind_gusts_10m")
         val dDay = d.a("is_day"); val dPres = d.a("pressure_msl")
+        val dCape = d.a("cape"); val dSnowD = d.a("snow_depth"); val dLpi = d.a("lightning_potential"); val dLine = d.a("snowfall_height")
 
         var hasD2 = false
         for (i in 0 until et.length()) {
@@ -253,7 +297,12 @@ object WeatherApi {
                     isDay = pick(dDay, eDay).let { if (it.isNaN()) true else it >= 0.5 },
                     pressure = pick(dPres, ePres),
                     prob = eProb.d(i),
-                    fromD2 = useD2
+                    fromD2 = useD2,
+                    cape = pick(dCape, eCape),
+                    lpi = if (useD2) dLpi.d(j!!) else Double.NaN,
+                    flashes = if (useD2) Double.NaN else eFlash.d(i),
+                    snowDepth = pick(dSnowD, eSnowD).let { if (it.isNaN()) Double.NaN else it * 100 },
+                    snowLine = if (j != null) dLine.d(j) else Double.NaN
                 )
             )
         }
@@ -321,7 +370,9 @@ object WeatherApi {
                     windDir = maxWindHour?.windDir ?: Double.NaN,
                     sunrise = sr?.first ?: 0L,
                     sunset = sr?.second ?: 0L,
-                    fromD2 = hs.count { it.fromD2 } * 2 > hs.size
+                    fromD2 = hs.count { it.fromD2 } * 2 > hs.size,
+                    thunder = hs.maxOf { it.thunder },
+                    snowDepth = hs.map { it.snowDepth }.filter { !it.isNaN() }.maxOrNull() ?: Double.NaN
                 )
             )
         }

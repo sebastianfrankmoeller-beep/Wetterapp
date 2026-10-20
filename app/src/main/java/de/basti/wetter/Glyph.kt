@@ -15,7 +15,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp: Int = 22) : View(ctx) {
 
-    enum class Kind { SEARCH, STAR, STAR_FILLED, GEAR, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
+    enum class Kind { BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
 
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -104,6 +104,54 @@ class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp
                     path.lineTo(X(16.6f), Y(6.8f))
                     path.lineTo(X(12.4f), Y(7.6f))
                     c.drawPath(path, paint)
+                }
+                Kind.BOLT -> {
+                    path.moveTo(X(13.5f), Y(2f))
+                    path.lineTo(X(5f), Y(13.5f))
+                    path.lineTo(X(11f), Y(13.5f))
+                    path.lineTo(X(9.5f), Y(22f))
+                    path.lineTo(X(19f), Y(9.5f))
+                    path.lineTo(X(13f), Y(9.5f))
+                    path.close()
+                    paint.style = Paint.Style.FILL_AND_STROKE
+                    paint.strokeWidth = 1.2f * u
+                    c.drawPath(path, paint)
+                }
+                Kind.SNOW -> {
+                    for (i in 0 until 3) {
+                        val a = Math.toRadians(i * 60.0 + 90)
+                        val dx = (cos(a) * 9.5f * u).toFloat()
+                        val dy = (sin(a) * 9.5f * u).toFloat()
+                        c.drawLine(cx - dx, cy - dy, cx + dx, cy + dy, paint)
+                    }
+                    paint.style = Paint.Style.FILL
+                    c.drawCircle(cx, cy, 2.2f * u, paint)
+                }
+                Kind.WARNING -> {
+                    path.moveTo(X(12f), Y(3f))
+                    path.lineTo(X(22f), Y(20.5f))
+                    path.lineTo(X(2f), Y(20.5f))
+                    path.close()
+                    paint.style = Paint.Style.FILL_AND_STROKE
+                    paint.strokeWidth = 1.6f * u
+                    c.drawPath(path, paint)
+                    paint.color = 0xFF15171A.toInt()
+                    paint.strokeWidth = 2.2f * u
+                    paint.style = Paint.Style.STROKE
+                    c.drawLine(X(12f), Y(9.5f), X(12f), Y(14.5f), paint)
+                    paint.style = Paint.Style.FILL
+                    c.drawCircle(X(12f), Y(17.6f), 1.3f * u, paint)
+                }
+                Kind.BELL -> {
+                    path.moveTo(X(5f), Y(17f))
+                    path.lineTo(X(19f), Y(17f))
+                    path.lineTo(X(17.5f), Y(14.5f))
+                    path.lineTo(X(17.5f), Y(10.5f))
+                    path.cubicTo(X(17.5f), Y(4f), X(6.5f), Y(4f), X(6.5f), Y(10.5f))
+                    path.lineTo(X(6.5f), Y(14.5f))
+                    path.close()
+                    c.drawPath(path, paint)
+                    c.drawLine(X(10f), Y(20.5f), X(14f), Y(20.5f), paint)
                 }
                 Kind.CLOSE -> {
                     c.drawLine(X(6f), Y(6f), X(18f), Y(18f), paint)

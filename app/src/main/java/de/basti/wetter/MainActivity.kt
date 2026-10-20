@@ -30,6 +30,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     private val navItems = ArrayList<Triple<View, GlyphView, android.widget.TextView>>()
 
     private var tab = 0
+    private var themeAtStart = 0
     private var shown: Forecast? = null
     private var loadSeq = 0
     private val io = Executors.newFixedThreadPool(2)
@@ -59,6 +60,9 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         root.addView(search, FrameLayout.LayoutParams(MATCH, MATCH))
 
         setContentView(root)
+        themeAtStart = Prefs.theme(this)
+        WarnCheck.ensureChannel(this)
+        WarnScheduler.ensure(this)
         applyIntentPlace(intent)
         selectTab(0)
         showSelected(refreshLocation = true)
@@ -190,6 +194,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     private fun cacheKey(sel: String, place: Place) = if (sel == Prefs.CURRENT) Prefs.CURRENT else place.id
 
     private fun locateAndLoad() {
+        if (Locator.hasPermission(this)) askNotificationsOnce()
         if (!Locator.hasPermission(this)) {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOC)
             return
@@ -221,6 +226,14 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                 }
             }
         }
+    }
+
+    /** Einmalig nach der Benachrichtigungs-Erlaubnis fragen (für Unwetterwarnungen, Android 13+). */
+    private fun askNotificationsOnce() {
+        if (android.os.Build.VERSION.SDK_INT < 33 || !Prefs.warnEnabled(this) || Prefs.askedNotifications(this)) return
+        if (WarnCheck.canNotify(this)) return
+        Prefs.setAskedNotifications(this)
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
     }
 
     private fun distKm(a1: Double, o1: Double, a2: Double, o2: Double): Double {
@@ -260,6 +273,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         shown = f
         forecastPage.bind(f)
         forecastPage.showStatus(null)
+        loadWarnings(f.place)
     }
 
     private fun recenterMaps(place: Place) {
@@ -322,21 +336,43 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     override fun onRefresh() = showSelected(refreshLocation = true, force = true)
 
     override fun onSettings() {
-        val names = arrayOf("Dunkel", "Automatisch (wie System)", "Hell")
-        val values = intArrayOf(Prefs.THEME_DARK, Prefs.THEME_AUTO, Prefs.THEME_LIGHT)
-        val current = values.indexOf(Prefs.theme(this))
+        startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    override fun onWarningClick(w: Warning) {
+        val msg = buildString {
+            append(w.timeRange())
+            if (w.description.isNotBlank()) append("\n\n").append(w.description)
+            if (w.instruction.isNotBlank()) append("\n\n").append(w.instruction)
+            append("\n\nQuelle: Deutscher Wetterdienst")
+        }
         AlertDialog.Builder(this, dialogTheme())
-            .setTitle("Darstellung")
-            .setSingleChoiceItems(names, current) { dlg, which ->
-                dlg.dismiss()
-                if (values[which] != Prefs.theme(this)) {
-                    Prefs.setTheme(this, values[which])
-                    recreate()
-                }
-            }
-            .setNeutralButton("Jetzt aktualisieren") { _, _ -> onRefresh() }
-            .setNegativeButton("Schließen", null)
+            .setTitle(w.headline)
+            .setMessage(msg)
+            .setPositiveButton("OK", null)
             .show()
+    }
+
+    // ------------------------------------------------------------ Warnungen
+
+    private var warnPlaceId: String? = null
+    private var warnAt = 0L
+
+    /** DWD-Warnungen für den gezeigten Ort laden (höchstens alle 10 Minuten). */
+    private fun loadWarnings(place: Place, force: Boolean = false) {
+        if (!force && warnPlaceId == place.id && System.currentTimeMillis() - warnAt < 10 * 60_000) return
+        if (warnPlaceId != place.id) forecastPage.setWarnings(null)
+        warnPlaceId = place.id
+        warnAt = System.currentTimeMillis()
+        val app = applicationContext
+        io.execute {
+            val res = runCatching { Warnings.fetch(app, place.lat, place.lon) }
+            main.post {
+                if (warnPlaceId != place.id) return@post
+                res.onSuccess { forecastPage.setWarnings(it) }
+                    .onFailure { warnAt = 0L }
+            }
+        }
     }
 
     private fun dialogTheme() =
@@ -369,7 +405,9 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTIF) return
         if (requestCode != REQ_LOC) return
+        askNotificationsOnce()
         if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
             locateAndLoad()
         } else {
@@ -382,6 +420,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onResume() {
         super.onResume()
+        if (Prefs.theme(this) != themeAtStart) { recreate(); return }
         if (tab == 1) radarPage?.onResume()
         if (tab == 2) windPage?.onResume()
         // Nach längerer Pause automatisch aktualisieren
@@ -414,6 +453,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     companion object {
         private const val REQ_LOC = 7
+        private const val REQ_NOTIF = 8
         const val EXTRA_PLACE = "place"
     }
 }

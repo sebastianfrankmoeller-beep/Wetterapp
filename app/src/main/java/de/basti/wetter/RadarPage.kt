@@ -260,6 +260,8 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     val map: MapView = MapSupport.createMap(ctx, p, center, 7.2)
     private val marker = PlaceMarker(p, resources.displayMetrics.density)
     private val overlay = RadarOverlay(map) { updateLabel() }
+    private val warnOverlay = WarnMapOverlay(map)
+    private lateinit var warnToggle: TextView
     private val timeline = TimelineView(ctx, p)
     private val timeLabel = Ui.tv(ctx, "", 17f, p.text, true)
     private val subLabel = Ui.tv(ctx, "", 12.5f, p.muted)
@@ -280,14 +282,15 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
     init {
         setBackgroundColor(p.bg)
+        map.overlays.add(warnOverlay)
         map.overlays.add(overlay)
-        map.overlays.add(MapSupport.labelsOverlay(ctx, p))
         map.overlays.add(marker)
+        warnOverlay.isEnabled = false
         marker.point = center
         addView(map, LayoutParams(MATCH, MATCH))
         map.addMapListener(object : MapListener {
-            override fun onScroll(event: ScrollEvent?): Boolean { overlay.schedule(); return false }
-            override fun onZoom(event: ZoomEvent?): Boolean { overlay.schedule(); return false }
+            override fun onScroll(event: ScrollEvent?): Boolean { overlay.schedule(); warnOverlay.schedule(); return false }
+            override fun onZoom(event: ZoomEvent?): Boolean { overlay.schedule(); warnOverlay.schedule(); return false }
         })
 
         // ------------------------------------------------- Steuerung unten
@@ -316,11 +319,21 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         }
         addView(panel, LayoutParams(MATCH, WRAP, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(12)) })
 
-        // Titel oben links
-        addView(Ui.tv(ctx, "Regenradar", 15f, p.text, true).apply {
-            background = Ui.rect(Ui.withAlpha(p.surface, 235), dpf(18), p.border, 1)
-            setPadding(dp(14), dp(9), dp(14), dp(9))
+        // Titel und Schalter für die Warnkarte oben links
+        warnToggle = Ui.tv(ctx, "Warnungen", 14f, p.text, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setOnClickListener { setWarnLayer(!warnOverlay.isEnabled) }
+        }
+        addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
+            setPadding(dp(14), dp(4), dp(4), dp(4))
+            addView(Ui.tv(ctx, "Regenradar", 15f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(10) })
+            addView(warnToggle)
         }, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
+        setWarnLayer(false)
 
         // Zurück zum Ort
         addView(FrameLayout(ctx).apply {
@@ -336,6 +349,14 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
         timeline.onChange = { setFrame(it); stop() }
         loadFrames()
+    }
+
+    private fun setWarnLayer(on: Boolean) {
+        warnOverlay.isEnabled = on
+        warnToggle.background = if (on) Ui.rect(p.accent, dpf(18)) else Ui.pressable(p, p.surfaceHi, dpf(18))
+        warnToggle.setTextColor(if (on) p.onAccent else p.text)
+        if (on) warnOverlay.reload()
+        map.invalidate()
     }
 
     fun setCenter(g: GeoPoint) {
@@ -409,7 +430,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
     fun onResume() { map.onResume(); loadFrames() }
     fun onPause() { stop(); map.onPause() }
-    fun destroy() { overlay.destroy(); map.onDetach() }
+    fun destroy() { overlay.destroy(); warnOverlay.destroy(); map.onDetach() }
 }
 
 /** Kleine Farblegende für Niederschlagsstärke. */
@@ -430,5 +451,93 @@ class LegendView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         c.drawText("schwach", 0f, 24 * d, text)
         text.textAlign = Paint.Align.RIGHT
         c.drawText("stark", w, 24 * d, text)
+    }
+}
+
+
+/** Amtliche DWD-Warnkarte (Gemeinden, eingefärbt nach Warnstufe) als halbtransparente Ebene. */
+class WarnMapOverlay(private val map: MapView) : Overlay() {
+    data class Key(val z: Int, val x: Int, val y: Int, val gen: Int)
+
+    private val cache = object : LruCache<Key, Bitmap>(24 * 1024 * 1024) {
+        override fun sizeOf(key: Key, value: Bitmap) = value.byteCount
+    }
+    private val loading = Collections.synchronizedSet(HashSet<Key>())
+    private val queue = LinkedBlockingDeque<Key>()
+    private val main = Handler(Looper.getMainLooper())
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 150 }
+    private val a = Point()
+    private val b = Point()
+    @Volatile private var alive = true
+    private var gen = 0          // neue Generation = Warnungen neu laden
+
+    init {
+        repeat(2) {
+            Thread {
+                while (alive) {
+                    val k = try { queue.take() } catch (e: InterruptedException) { break }
+                    if (k.z < 0) break
+                    load(k)
+                }
+            }.apply { isDaemon = true; start() }
+        }
+    }
+
+    fun reload() { gen++; cache.evictAll(); schedule() }
+
+    fun destroy() {
+        alive = false
+        repeat(2) { queue.offer(Key(-1, 0, 0, 0)) }
+        cache.evictAll()
+    }
+
+    private fun visible(): List<Key> {
+        val bb = map.boundingBox
+        val z = floor(map.zoomLevelDouble).toInt().coerceIn(5, 9)
+        val n = 1 shl z
+        val x0 = floor(Tiles.xOf(bb.lonWest, z)).toInt().coerceIn(0, n - 1)
+        val x1 = floor(Tiles.xOf(bb.lonEast, z)).toInt().coerceIn(0, n - 1)
+        val y0 = floor(Tiles.yOf(bb.latNorth, z)).toInt().coerceIn(0, n - 1)
+        val y1 = floor(Tiles.yOf(bb.latSouth, z)).toInt().coerceIn(0, n - 1)
+        val out = ArrayList<Key>()
+        for (x in min(x0, x1)..max(x0, x1)) for (y in y0..y1) {
+            val lonW = Tiles.lonOf(x.toDouble(), z); val lonE = Tiles.lonOf(x + 1.0, z)
+            val latN = Tiles.latOf(y.toDouble(), z); val latS = Tiles.latOf(y + 1.0, z)
+            if (lonE < 5.0 || lonW > 15.5 || latN < 47.0 || latS > 55.5) continue
+            out.add(Key(z, x, y, gen))
+        }
+        return out
+    }
+
+    fun schedule() {
+        if (!isEnabled) return
+        queue.clear()
+        for (k in visible()) if (cache.get(k) == null && k !in loading) queue.offer(k)
+    }
+
+    private fun load(k: Key) {
+        if (!loading.add(k)) return
+        try {
+            val url = "https://maps.dwd.de/geoserver/dwd/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
+                "&LAYERS=Warnungen_Gemeinden&STYLES=&FORMAT=image/png&TRANSPARENT=true" +
+                "&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX=${Tiles.bbox3857(k.x, k.y, k.z)}"
+            val bytes = Net.getBytes(url, 20000)
+            val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            if (bmp != null) cache.put(k, bmp)
+        } finally {
+            loading.remove(k)
+        }
+        main.post { map.invalidate() }
+    }
+
+    override fun draw(c: Canvas, mv: MapView, shadow: Boolean) {
+        if (shadow) return
+        val pj = mv.projection
+        for (k in visible()) {
+            val bmp = cache.get(k) ?: continue
+            pj.toPixels(GeoPoint(Tiles.latOf(k.y.toDouble(), k.z), Tiles.lonOf(k.x.toDouble(), k.z)), a)
+            pj.toPixels(GeoPoint(Tiles.latOf(k.y + 1.0, k.z), Tiles.lonOf(k.x + 1.0, k.z)), b)
+            c.drawBitmap(bmp, null, RectF(a.x - 0.5f, a.y - 0.5f, b.x + 0.5f, b.y + 0.5f), paint)
+        }
     }
 }

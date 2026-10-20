@@ -17,6 +17,13 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/** Farbe der Gewitterstufe (gering / mäßig / hoch). */
+fun thunderColor(level: Int, p: Ui.Palette): Int = when (level) {
+    1 -> p.sun
+    2 -> 0xFFFF8A3D.toInt()
+    else -> p.danger
+}
+
 /** Temperaturfarbe von kalt (blau) über mild (grün) zu heiß (orange/rot). */
 fun tempColor(t: Double, p: Ui.Palette): Int {
     if (t.isNaN()) return p.muted
@@ -154,8 +161,9 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             text.color = if (i == 0) p.accent else p.text
             c.drawText(if (i == 0) "Jetzt" else "%02d".format(f.hour(hr.t)), cx, yHour, text)
 
-            // Symbol
+            // Symbol (+ Blitz-Abzeichen bei Gewitterrisiko)
             WeatherIcons.draw(c, hr.code, hr.isDay, cx, yIcon, iconSize, p)
+            if (hr.thunder >= 1) WeatherIcons.boltBadge(c, cx + 15 * d, yIcon - 12 * d, 13 * d, thunderColor(hr.thunder, p), p.surface)
 
             // Temperaturpunkt + Wert
             val y = ty(hr.temp)
@@ -273,6 +281,7 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
             // Symbol
             WeatherIcons.draw(c, day.code, true, xIcon, cy, 34 * d, p)
+            if (day.thunder >= 1) WeatherIcons.boltBadge(c, xIcon + 15 * d, cy - 12 * d, 13 * d, thunderColor(day.thunder, p), p.surface)
 
             // Niederschlag
             if (day.precip >= 0.3 || (!day.probMax.isNaN() && day.probMax >= 30)) {

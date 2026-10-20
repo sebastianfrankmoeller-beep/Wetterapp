@@ -41,6 +41,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         fun onRefresh()
         fun onSelectPlace(id: String)
         fun onLongPressPlace(id: String)
+        fun onWarningClick(w: Warning)
     }
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -60,6 +61,8 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val bigIcon = IconView(ctx, p, 92)
     private val desc = Ui.tv(ctx, "", 18f, p.text, true)
     private val feels = Ui.tv(ctx, "", 14f, p.muted)
+    private val hints = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+    private val warnBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
     private val stats = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
     private val nowcastCard: LinearLayout
@@ -110,6 +113,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         }, 16)
 
         add(status.apply { visibility = View.GONE }, 8)
+        add(warnBox.apply { visibility = View.GONE }, 0)
 
         // ----------------------------------------------------------- Aktuell
         val hero = LinearLayout(ctx).apply {
@@ -128,6 +132,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
                 addView(bigIcon)
             })
             addView(stats, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(18) })
+            addView(hints, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         add(hero, 14)
 
@@ -246,13 +251,38 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         feels.text = "Gefühlt ${Fmt.temp(now.feels)}$hiLo"
 
         stats.removeAllViews()
+        // Liegt Schnee, ersetzt die Schneehöhe den Luftdruck
+        val lastTile = if (!now.snowDepth.isNaN() && now.snowDepth >= 1)
+            statTile("Schneehöhe", "${now.snowDepth.roundToInt()} cm")
+        else statTile("Luftdruck", if (now.pressure.isNaN()) "–" else "${now.pressure.roundToInt()}", "hPa")
         val tiles = listOf(
             statTile("Wind", "${Fmt.kmh(now.wind)} km/h", Fmt.dir(now.windDir)),
             statTile("Böen", "${Fmt.kmh(now.gust)} km/h"),
             statTile("Feuchte", if (now.humidity.isNaN()) "–" else "${now.humidity.roundToInt()} %"),
-            statTile("Luftdruck", if (now.pressure.isNaN()) "–" else "${now.pressure.roundToInt()}", "hPa")
+            lastTile
         )
         for (t in tiles) stats.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // Hinweise: Gewitterrisiko und Schneefallgrenze in den nächsten 24 Stunden
+        hints.removeAllViews()
+        val next = f.hours.take(24)
+        val maxThunder = next.maxOfOrNull { it.thunder } ?: 0
+        if (maxThunder >= 1) {
+            val first = next.first { it.thunder == maxThunder }
+            val start = next.first { it.thunder >= 1 }
+            val whenTxt = if (start === f.hours.first()) "jetzt" else "ab ${f.hhmm(start.t)} Uhr"
+            val peak = if (first !== start) "  ·  am stärksten ${f.hhmm(first.t)} Uhr" else ""
+            hints.addView(hint(GlyphView.Kind.BOLT, thunderColor(maxThunder, p),
+                "Gewitterrisiko ${Thunder.NAMES[maxThunder]} $whenTxt$peak"))
+        }
+        val wetCold = next.filter { it.precip >= 0.1 && !it.snowLine.isNaN() && it.snowLine < 1500 }
+        if (wetCold.isNotEmpty()) {
+            val line = (wetCold.map { it.snowLine }.average() / 50).roundToInt() * 50
+            hints.addView(hint(GlyphView.Kind.SNOW, p.snow, "Schneefallgrenze um $line m"))
+        } else if (next.sumOf { it.snow } >= 0.5) {
+            hints.addView(hint(GlyphView.Kind.SNOW, p.snow, "Neuschnee bis ${Fmt.mm(next.sumOf { it.snow })} cm in 24 h"))
+        }
+        hints.visibility = if (hints.childCount > 0) View.VISIBLE else View.GONE
 
         // Regen der nächsten Stunden (nur im ICON-D2-Gebiet verfügbar)
         val nc = f.nowcast.take(12)
@@ -270,6 +300,46 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
 
         val models = if (f.hasD2) "DWD ICON-D2 (2 km) bis 48 h, danach ECMWF IFS (9 km)" else "ECMWF IFS (9 km)"
         footer.text = "Modelle: $models\nDaten: Open-Meteo · Stand ${f.hhmmLocal(f.fetchedAt)}"
+    }
+
+    private fun hint(kind: GlyphView.Kind, color: Int, txt: String): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, dp(14), 0, 0)
+        addView(GlyphView(context, kind, color, 18), LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(10) })
+        addView(Ui.tv(context, txt, 14f, p.text, true), LinearLayout.LayoutParams(0, WRAP, 1f))
+    }
+
+    // ------------------------------------------------------------ Warnungen
+
+    /** Amtliche DWD-Warnungen als farbige Karten oben; null/leer blendet sie aus. */
+    fun setWarnings(list: List<Warning>?) {
+        warnBox.removeAllViews()
+        if (list.isNullOrEmpty()) { warnBox.visibility = View.GONE; return }
+        warnBox.visibility = View.VISIBLE
+        for (w in list.take(4)) {
+            val col = Warning.color(w.level)
+            val card = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = Ui.pressable(p, Ui.mix(p.surface, col, if (p.dark) 0.16f else 0.12f), dpf(20), Ui.withAlpha(col, 150), dp(1))
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                addView(GlyphView(context, GlyphView.Kind.WARNING, col, 24), LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(12) })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    val kind = if (w.future) "VORABINFORMATION" else Warning.LEVEL_NAMES[w.level].uppercase()
+                    addView(Ui.tv(context, "$kind · ${Warning.COLOR_NAMES[w.level].uppercase()}", 11f, col, true).apply { letterSpacing = 0.06f })
+                    addView(Ui.tv(context, w.event.split(" ").joinToString(" ") { wd -> wd.lowercase().replaceFirstChar { it.uppercase() } }, 16f, p.text, true),
+                        LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                    addView(Ui.tv(context, w.timeRange(), 13f, p.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                setOnClickListener { cb.onWarningClick(w) }
+            }
+            warnBox.addView(card, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(10) })
+        }
+        if (list.size > 4) {
+            warnBox.addView(Ui.tv(context, "+ ${list.size - 4} weitere Warnungen", 13f, p.muted).apply { setPadding(dp(8), 0, 0, dp(10)) })
+        }
     }
 
     private fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): String {

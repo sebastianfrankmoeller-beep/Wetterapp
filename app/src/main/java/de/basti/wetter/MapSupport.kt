@@ -3,24 +3,26 @@ package de.basti.wetter
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.MapTileProviderBasic
-import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.TilesOverlay
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Gemeinsame Kartengrundlage für Radar und Wind (dunkle bzw. helle CARTO-Karte). */
+/**
+ * Gemeinsame Kartengrundlage für Radar und Wind: OpenStreetMap-Karte.
+ * Im Dunkelmodus wird sie in der App selbst dunkel eingefärbt.
+ */
 object MapSupport {
 
     private var configured = false
@@ -29,29 +31,38 @@ object MapSupport {
         if (configured) return
         configured = true
         val conf = Configuration.getInstance()
-        conf.userAgentValue = ctx.packageName
+        // OpenStreetMap verlangt eine eindeutige App-Kennung
+        conf.userAgentValue = "WetterApp-${ctx.packageName}/1.0"
         conf.osmdroidBasePath = File(ctx.cacheDir, "osmdroid")
         conf.osmdroidTileCache = File(ctx.cacheDir, "osmdroid/tiles")
         conf.cacheMapTileCount = 40.toShort()
-        conf.tileDownloadThreads = 4.toShort()
+        conf.tileDownloadThreads = 2.toShort()
     }
 
-    private fun carto(name: String, style: String) = XYTileSource(
-        name, 2, 18, 256, "@2x.png",
-        arrayOf(
-            "https://a.basemaps.cartocdn.com/$style/",
-            "https://b.basemaps.cartocdn.com/$style/",
-            "https://c.basemaps.cartocdn.com/$style/",
-            "https://d.basemaps.cartocdn.com/$style/"
-        ),
-        "© OpenStreetMap-Mitwirkende © CARTO"
-    )
+    /** Graustufen, invertiert und abgedunkelt, mit leichtem Blaustich – passt zum App-Design. */
+    private fun darkFilter(): ColorMatrixColorFilter {
+        val k = 0.52f
+        val off = 255f * k + 16f
+        val r = 0.30f * k; val g = 0.59f * k; val b = 0.11f * k
+        return ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+            -r, -g, -b, 0f, off,
+            -r, -g, -b, 0f, off + 3f,
+            -r, -g, -b, 0f, off + 10f,
+            0f, 0f, 0f, 1f, 0f
+        )))
+    }
 
-    /** Erstellt eine Karte ohne Beschriftung; Beschriftungen kommen als eigene Ebene darüber. */
+    /** Helle Karte etwas entsättigen, damit Radar- und Windfarben hervorstechen. */
+    private fun lightFilter(): ColorMatrixColorFilter {
+        val cm = ColorMatrix()
+        cm.setSaturation(0.35f)
+        return ColorMatrixColorFilter(cm)
+    }
+
     fun createMap(ctx: Context, p: Ui.Palette, center: GeoPoint, zoom: Double): MapView {
         configure(ctx)
         val map = MapView(ctx)
-        map.setTileSource(carto(if (p.dark) "CartoDarkBase" else "CartoLightBase", if (p.dark) "dark_nolabels" else "light_nolabels"))
+        map.setTileSource(TileSourceFactory.MAPNIK)
         map.isTilesScaledToDpi = true
         map.setMultiTouchControls(true)
         map.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
@@ -60,21 +71,13 @@ object MapSupport {
         map.isHorizontalMapRepetitionEnabled = true
         map.isVerticalMapRepetitionEnabled = false
         map.setScrollableAreaLimitLatitude(MapView.getTileSystem().maxLatitude, MapView.getTileSystem().minLatitude, 0)
+        map.overlayManager.tilesOverlay.setColorFilter(if (p.dark) darkFilter() else lightFilter())
         map.overlayManager.tilesOverlay.setLoadingBackgroundColor(p.bg)
         map.overlayManager.tilesOverlay.setLoadingLineColor(p.bg)
         map.setBackgroundColor(p.bg)
         map.controller.setZoom(zoom)
         map.controller.setCenter(center)
         return map
-    }
-
-    /** Beschriftungsebene (Orte, Grenzen) – wird über Radar/Wind gelegt. */
-    fun labelsOverlay(ctx: Context, p: Ui.Palette): TilesOverlay {
-        val provider = MapTileProviderBasic(ctx, carto(if (p.dark) "CartoDarkLabels" else "CartoLightLabels", if (p.dark) "dark_only_labels" else "light_only_labels"))
-        return TilesOverlay(provider, ctx).apply {
-            setLoadingBackgroundColor(Color.TRANSPARENT)
-            setLoadingLineColor(Color.TRANSPARENT)
-        }
     }
 }
 

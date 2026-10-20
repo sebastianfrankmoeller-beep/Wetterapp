@@ -218,6 +218,15 @@ object WeatherIcons {
         c.drawPath(path, paint)
     }
 
+    /** Kleines Blitz-Abzeichen (Gewitterrisiko), zentriert bei (cx, cy). */
+    fun boltBadge(c: Canvas, cx: Float, cy: Float, size: Float, color: Int, bg: Int) {
+        paint.style = Paint.Style.FILL
+        paint.color = bg
+        c.drawCircle(cx, cy, size * 0.62f, paint)
+        val u = size * 0.78f / 34f
+        bolt(c, cx - 0.5f * u, cy - 9f * u, u, color)
+    }
+
     /** Windpfeil: zeigt, wohin der Wind weht (Richtungsangabe = woher). */
     fun windArrow(c: Canvas, cx: Float, cy: Float, size: Float, fromDeg: Double, color: Int) {
         if (fromDeg.isNaN()) return

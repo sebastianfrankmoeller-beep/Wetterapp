@@ -16,12 +16,28 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   Eine grüne Linie markiert, wo von ICON-D2 auf ECMWF umgeschaltet wird.
 - **15 Tage**: Min/Max mit Temperaturbalken, Niederschlag, Wahrscheinlichkeit.
   Tippen auf einen Tag springt im Stundenstreifen dorthin.
+- **Gewitter**: Risiko gering / mäßig / hoch pro Stunde und Tag (Blitz-Symbol), Hinweis „Gewitterrisiko ab …“
+- **Schnee**: Neuschnee, Schneehöhe (ersetzt bei liegendem Schnee die Luftdruck-Kachel), Schneefallgrenze
+- **Amtliche DWD-Warnungen** als farbige Karten oben in der Vorhersage, antippen für den vollen Text
 - **Regenradar** des Deutschen Wetterdienstes: letzte 90 Minuten gemessen + 2 Stunden DWD-Vorhersage,
-  abspielbar, mit Zeitleiste
-- **Windkarte**: farbige Windstärke und fließende Partikel, 48 Stunden per Zeitleiste,
-  Wert unter dem Fadenkreuz in der Kartenmitte
+  abspielbar, mit Zeitleiste; zuschaltbare **Warnkarte**
+- **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
+  Karte antippen zeigt Wind, Richtung, Böen (und Gewitterrisiko) an dieser Stelle
+- **Unwetter-Benachrichtigungen** (auch auf der Garmin-Uhr, siehe unten)
 - **Widget** (siehe unten)
-- **Darstellung**: Dunkel (Standard), Automatisch oder Hell – Zahnrad oben rechts
+- **Einstellungen** (Zahnrad oben rechts): Darstellung, Warnungen, Berechtigungen
+
+## Unwetter-Benachrichtigungen
+
+- Quelle: amtliche Warnungen des DWD für deine Gemeinde
+- Geprüft wird **stündlich**, bei Gewitterlage (Vorhersage oder aktive Gewitterwarnung) **alle 15 Minuten**
+- Gemeldet wird jede Warnung nur einmal – erneut nur, wenn sie hochgestuft wird
+- Einstellbar: ab Stufe Gelb / **Orange** (Standard) / Rot, für Standort und ausgewählte Favoriten,
+  Nachtruhe 22–7 Uhr (Rot und Violett kommen immer durch)
+- „Test-Benachrichtigung senden“ zum Einrichten
+- **Garmin**: In der Garmin-Connect-App die Benachrichtigungen für „Wetter“ freigeben
+- Für Warnungen unterwegs unter *Berechtigungen* „Standort im Hintergrund“ erlauben,
+  sonst gilt die Position, an der die App zuletzt geöffnet wurde
 
 ## Wettermodelle
 
@@ -31,7 +47,9 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 | danach bis 15 Tage (und außerhalb des D2-Gebiets) | **ECMWF IFS HRES** | 9 km |
 | Regenwahrscheinlichkeit | ECMWF-Ensemble | – |
 | Radar | DWD Radarverbund + Nowcast | 1 km, 5 min |
-| Windkarte | DWD ICON (D2/EU/global, nahtlos) | – |
+| Windkarte, Böen, Gewitter-Potenzial | DWD ICON (D2/EU/global, nahtlos) | – |
+| Gewitterrisiko Vorhersage | ICON-D2 Blitz-Potenzial, danach ECMWF Blitzdichte/CAPE | – |
+| Warnungen | DWD (amtlich) | Gemeinde |
 
 Alle Wetterdaten kommen über die kostenlose Schnittstelle von [Open-Meteo](https://open-meteo.com)
 (nur nicht-kommerziell kostenlos). Ab Tag 10 ist jede Vorhersage unsicher – die Tagesliste zeigt das an.
@@ -70,12 +88,14 @@ Versionsnummer steigt mit jedem Lauf – eine neue APK lässt sich einfach über
 | `ForecastPage.kt` | Vorhersage-Seite |
 | `ForecastViews.kt` | Stundenstreifen, Tagesliste, Regen-Nowcast (selbst gezeichnet) |
 | `WeatherIcons.kt` | Eigene Wettersymbole (App und Widget) |
-| `RadarPage.kt` | DWD-Radar mit Zeitleiste |
-| `WindPage.kt` | Windkarte mit Partikel-Animation |
+| `RadarPage.kt` | DWD-Radar mit Zeitleiste, Warnkarte |
+| `Warnings.kt`, `WarnService.kt` | DWD-Warnungen, Hintergrundprüfung, Benachrichtigungen |
+| `SettingsActivity.kt` | Einstellungen |
+| `WindPage.kt` | Windkarte (Wind, Böen, Gewitter) mit Partikel-Animation |
 | `SearchPanel.kt` | Ortssuche |
 | `Locator.kt` | Standort und Ortsname |
 | `widget/` | Widget, Einstellungen, Zeichnen |
 | `Ui.kt`, `Glyph.kt`, `MapSupport.kt` | Farben, Symbole, Kartengrundlage |
 
 Datenquellen: Open-Meteo (CC BY 4.0), Deutscher Wetterdienst, ECMWF.
-Karten: © OpenStreetMap-Mitwirkende, © CARTO.
+Karten: © OpenStreetMap-Mitwirkende.

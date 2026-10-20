@@ -102,6 +102,36 @@ object Prefs {
         sp(ctx).edit().putString("cache_$placeId", json).apply()
     }
 
+    // -------------------------------------------------------------- Unwetterwarnungen
+    fun warnEnabled(ctx: Context) = sp(ctx).getBoolean("warn_on", true)
+    fun setWarnEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("warn_on", v).apply()
+
+    /** Mindeststufe für Benachrichtigungen: 1 Gelb, 2 Orange, 3 Rot. */
+    fun warnMinLevel(ctx: Context) = sp(ctx).getInt("warn_min", 2)
+    fun setWarnMinLevel(ctx: Context, v: Int) = sp(ctx).edit().putInt("warn_min", v).apply()
+
+    fun warnLocation(ctx: Context) = sp(ctx).getBoolean("warn_loc", true)
+    fun setWarnLocation(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("warn_loc", v).apply()
+
+    /** Favoriten (IDs), für die ebenfalls gewarnt wird. */
+    fun warnFavorites(ctx: Context): Set<String> = sp(ctx).getStringSet("warn_favs", emptySet()) ?: emptySet()
+    fun setWarnFavorite(ctx: Context, id: String, on: Boolean) {
+        val s = warnFavorites(ctx).toMutableSet()
+        if (on) s.add(id) else s.remove(id)
+        sp(ctx).edit().putStringSet("warn_favs", s).apply()
+    }
+
+    fun warnQuiet(ctx: Context) = sp(ctx).getBoolean("warn_quiet", false)
+    fun setWarnQuiet(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("warn_quiet", v).apply()
+
+    /** Bereits gemeldete Warnungen: Schlüssel → "Stufe|Ablaufzeit". */
+    fun warnSeen(ctx: Context): JSONObject =
+        runCatching { JSONObject(sp(ctx).getString("warn_seen", "{}") ?: "{}") }.getOrDefault(JSONObject())
+    fun setWarnSeen(ctx: Context, o: JSONObject) = sp(ctx).edit().putString("warn_seen", o.toString()).apply()
+
+    fun askedNotifications(ctx: Context) = sp(ctx).getBoolean("asked_notif", false)
+    fun setAskedNotifications(ctx: Context) = sp(ctx).edit().putBoolean("asked_notif", true).apply()
+
     // ---------------------------------------------------------------------- Widget
     fun widgetPlace(ctx: Context, id: Int): String = sp(ctx).getString("w_place_$id", CURRENT) ?: CURRENT
     fun widgetMode(ctx: Context, id: Int): Int = sp(ctx).getInt("w_mode_$id", 0)
