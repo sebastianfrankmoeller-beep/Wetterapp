@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vorschau in der Widget-Auswahl -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp"
+    android:height="110dp"
+    android:viewportWidth="250"
+    android:viewportHeight="110">
+
+    <path
+        android:fillColor="#E615171A"
+        android:pathData="M24,0L226,0A24,24 0 0 1 250,24L250,86A24,24 0 0 1 226,110L24,110A24,24 0 0 1 0,86L0,24A24,24 0 0 1 24,0Z" />
+    <path
+        android:fillColor="#F5B544"
+        android:pathData="M42,40m-11,0a11,11 0 1 1 22,0a11,11 0 1 1 -22,0" />
+    <path
+        android:fillColor="#F2F3F5"
+        android:pathData="M26,66 L56,66 A9,9 0 0 0 56,48 A12,12 0 0 0 34,45 A10,10 0 0 0 26,66 Z" />
+    <path
+        android:fillColor="#F2F3F5"
+        android:pathData="M78,30h52v22h-52z" />
+    <path
+        android:fillColor="#8B9098"
+        android:pathData="M78,60h70v8h-70z" />
+    <path
+        android:fillColor="#5BE3A8"
+        android:pathData="M78,80h150v4h-150z" />
+    <path
+        android:fillColor="#4A90E2"
+        android:pathData="M160,88h8v10h-8z M175,84h8v14h-8z M190,92h8v6h-8z" />
+</vector>

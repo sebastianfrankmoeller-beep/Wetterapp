@@ -1,0 +1,290 @@
+package de.basti.wetter
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Canvas
+import android.text.TextUtils
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import kotlin.math.roundToInt
+
+/** Großes Wettersymbol als eigene View. */
+@SuppressLint("ViewConstructor")
+class IconView(ctx: Context, private val p: Ui.Palette, private val sizeDp: Int) : View(ctx) {
+    var code = 3
+    var isDay = true
+    fun set(code: Int, isDay: Boolean) { this.code = code; this.isDay = isDay; invalidate() }
+    override fun onMeasure(w: Int, h: Int) {
+        val s = Ui.dp(context, sizeDp)
+        setMeasuredDimension(s, s)
+    }
+    override fun onDraw(c: Canvas) = WeatherIcons.draw(c, code, isDay, width / 2f, height / 2f, width.toFloat(), p)
+}
+
+/**
+ * Vorhersage-Seite: Ortsleiste mit Favoriten, aktuelle Werte,
+ * Regen der nächsten Stunden, stündlicher Verlauf und 15 Tage.
+ */
+@SuppressLint("ViewConstructor")
+class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Callbacks) : FrameLayout(ctx) {
+
+    interface Callbacks {
+        fun onSearch()
+        fun onSettings()
+        fun onToggleFavorite()
+        fun onRefresh()
+        fun onSelectPlace(id: String)
+        fun onLongPressPlace(id: String)
+    }
+
+    private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+    private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+    private fun dp(v: Number) = Ui.dp(context, v)
+    private fun dpf(v: Number) = Ui.dpf(context, v)
+
+    val scroll = ScrollView(ctx)
+    private val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(28)) }
+
+    private val title = Ui.tv(ctx, "", 28f, p.text, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+    private val subtitle = Ui.tv(ctx, "", 13.5f, p.muted)
+    private val star = GlyphView(ctx, GlyphView.Kind.STAR, p.muted)
+    private val pills = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+
+    private val bigTemp = Ui.tv(ctx, "–", 76f, p.text).apply { typeface = Ui.TF_LIGHT }
+    private val bigIcon = IconView(ctx, p, 92)
+    private val desc = Ui.tv(ctx, "", 18f, p.text, true)
+    private val feels = Ui.tv(ctx, "", 14f, p.muted)
+    private val stats = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+
+    private val nowcastCard: LinearLayout
+    private val nowcastText = Ui.tv(ctx, "", 15f, p.text, true)
+    private val nowcastView = NowcastView(ctx, p)
+
+    private val hourly = HourlyView(ctx, p)
+    private val hourlyScroll = HorizontalScrollView(ctx).apply {
+        isHorizontalScrollBarEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        addView(hourly)
+    }
+    private val days = DaysView(ctx, p)
+    private val footer = Ui.tv(ctx, "", 11.5f, p.muted).apply { setLineSpacing(0f, 1.25f) }
+    val status = Ui.tv(ctx, "", 14f, p.muted).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(10)) }
+
+    init {
+        setBackgroundColor(p.bg)
+        scroll.isVerticalScrollBarEnabled = false
+        scroll.addView(root)
+        addView(scroll, LayoutParams(MATCH, MATCH))
+
+        fun add(v: View, bottom: Int) = root.addView(v, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(bottom) })
+
+        // ------------------------------------------------------------- Kopfzeile
+        val head = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val col = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(4), 0, 0, 0)
+                addView(title)
+                addView(subtitle, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+            }
+            addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(roundButton(star) { cb.onToggleFavorite() })
+            addView(roundButton(GlyphView(ctx, GlyphView.Kind.SEARCH, p.text)) { cb.onSearch() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
+            addView(roundButton(GlyphView(ctx, GlyphView.Kind.GEAR, p.text)) { cb.onSettings() }, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
+        }
+        add(head, 14)
+
+        // ---------------------------------------------------------- Favoritenleiste
+        add(HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false
+            addView(pills)
+        }, 16)
+
+        add(status.apply { visibility = View.GONE }, 8)
+
+        // ----------------------------------------------------------- Aktuell
+        val hero = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Ui.rect(p.surface, dpf(24), p.border, 1)
+            setPadding(dp(20), dp(16), dp(20), dp(18))
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(bigTemp)
+                    addView(desc, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                    addView(feels, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(6) })
+                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                addView(bigIcon)
+            })
+            addView(stats, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(18) })
+        }
+        add(hero, 14)
+
+        // ------------------------------------------------------- Regen-Nowcast
+        nowcastCard = card().apply {
+            addView(nowcastText)
+            addView(nowcastView, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(12) })
+        }
+        add(nowcastCard, 14)
+
+        // ------------------------------------------------------------ Stündlich
+        add(section("Stündlich"), 8)
+        add(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Ui.rect(p.surface, dpf(24), p.border, 1)
+            setPadding(0, dp(10), 0, dp(6))
+            clipToOutline = true
+            addView(hourlyScroll)
+        }, 22)
+
+        // -------------------------------------------------------------- Tage
+        add(section("15 Tage"), 8)
+        add(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Ui.rect(p.surface, dpf(24), p.border, 1)
+            setPadding(0, dp(4), 0, dp(4))
+            addView(days)
+        }, 18)
+        days.onDayClick = { i ->
+            val f = days.forecast
+            if (f != null) {
+                days.selected = i
+                val x = hourly.xOf(f.days[i].start + if (i == 0) 0 else 7 * 3600)
+                hourlyScroll.smoothScrollTo(x, 0)
+                // Stundenstreifen in Sicht bringen
+                scroll.smoothScrollTo(0, (hourlyScroll.parent as View).top - dp(40))
+            }
+        }
+
+        add(footer.apply { setPadding(dp(6), 0, dp(6), 0) }, 0)
+    }
+
+    private fun section(t: String) = Ui.tv(context, t.uppercase(), 12.5f, p.muted, true).apply {
+        letterSpacing = 0.08f
+        setPadding(dp(6), 0, 0, 0)
+    }
+
+    private fun card() = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = Ui.rect(p.surface, dpf(24), p.border, 1)
+        setPadding(dp(18), dp(16), dp(18), dp(12))
+    }
+
+    private fun roundButton(g: GlyphView, onClick: () -> Unit): View = FrameLayout(context).apply {
+        background = Ui.pressable(p, p.surface, dpf(22), p.border, 1)
+        val s = dp(44)
+        layoutParams = LinearLayout.LayoutParams(s, s)
+        addView(g, LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        setOnClickListener { onClick() }
+    }
+
+    private fun statTile(label: String, value: String, sub: String = ""): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(Ui.tv(context, label, 11.5f, p.muted))
+        addView(Ui.tv(context, value, 16f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(5) })
+        if (sub.isNotEmpty()) addView(Ui.tv(context, sub, 11.5f, p.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(3) })
+    }
+
+    // ------------------------------------------------------------- Ortsleiste
+
+    class PillItem(val id: String, val label: String, val selected: Boolean, val isLocation: Boolean)
+
+    fun setPills(items: List<PillItem>) {
+        pills.removeAllViews()
+        for ((i, it) in items.withIndex()) {
+            val fg = if (it.selected) p.onAccent else p.text
+            val pill = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(if (it.isLocation) 12 else 16), dp(9), dp(16), dp(9))
+                background = if (it.selected) Ui.pressable(p, p.accent, dpf(20))
+                else Ui.pressable(p, p.surface, dpf(20), p.border, 1)
+                if (it.isLocation) addView(GlyphView(context, GlyphView.Kind.PIN, fg, 16), LinearLayout.LayoutParams(dp(16), dp(16)).apply { rightMargin = dp(6) })
+                addView(Ui.tv(context, it.label, 14f, fg, true).apply { maxLines = 1 })
+                setOnClickListener { _ -> cb.onSelectPlace(it.id) }
+                if (!it.isLocation) setOnLongClickListener { _ -> cb.onLongPressPlace(it.id); true }
+            }
+            pills.addView(pill, LinearLayout.LayoutParams(WRAP, WRAP).apply { if (i > 0) leftMargin = dp(8) })
+        }
+    }
+
+    // ------------------------------------------------------------- Kopfzeile
+
+    fun setHeader(name: String, region: String, isFavorite: Boolean, canFavorite: Boolean) {
+        title.text = name
+        subtitle.text = region
+        subtitle.visibility = if (region.isEmpty()) View.GONE else View.VISIBLE
+        star.set(if (isFavorite) GlyphView.Kind.STAR_FILLED else GlyphView.Kind.STAR, if (isFavorite) p.warn else p.text)
+        (star.parent as View).visibility = if (canFavorite) View.VISIBLE else View.GONE
+    }
+
+    fun showStatus(msg: String?) {
+        status.text = msg ?: ""
+        status.visibility = if (msg.isNullOrEmpty()) View.GONE else View.VISIBLE
+    }
+
+    // ------------------------------------------------------------- Inhalt
+
+    fun bind(f: Forecast) {
+        val now = f.now ?: return
+        bigTemp.text = Fmt.temp(now.temp)
+        bigIcon.set(now.code, now.isDay)
+        desc.text = Fmt.codeAt(now.code, now.isDay)
+        val today = f.days.firstOrNull()
+        val hiLo = if (today != null) "  ·  ↑ ${Fmt.temp(today.max)}  ↓ ${Fmt.temp(today.min)}" else ""
+        feels.text = "Gefühlt ${Fmt.temp(now.feels)}$hiLo"
+
+        stats.removeAllViews()
+        val tiles = listOf(
+            statTile("Wind", "${Fmt.kmh(now.wind)} km/h", Fmt.dir(now.windDir)),
+            statTile("Böen", "${Fmt.kmh(now.gust)} km/h"),
+            statTile("Feuchte", if (now.humidity.isNaN()) "–" else "${now.humidity.roundToInt()} %"),
+            statTile("Luftdruck", if (now.pressure.isNaN()) "–" else "${now.pressure.roundToInt()}", "hPa")
+        )
+        for (t in tiles) stats.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // Regen der nächsten Stunden (nur im ICON-D2-Gebiet verfügbar)
+        val nc = f.nowcast.take(12)
+        if (nc.size >= 4) {
+            nowcastCard.visibility = View.VISIBLE
+            nowcastView.forecast = f
+            nowcastView.data = nc
+            nowcastText.text = nowcastSummary(f, nc)
+        } else nowcastCard.visibility = View.GONE
+
+        hourly.forecast = f
+        days.selected = -1
+        days.forecast = f
+        hourlyScroll.scrollTo(0, 0)
+
+        val models = if (f.hasD2) "DWD ICON-D2 (2 km) bis 48 h, danach ECMWF IFS (9 km)" else "ECMWF IFS (9 km)"
+        footer.text = "Modelle: $models\nDaten: Open-Meteo · Stand ${f.hhmmLocal(f.fetchedAt)}"
+    }
+
+    private fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): String {
+        val wetNow = nc.first().second >= 0.05
+        val firstWet = nc.indexOfFirst { it.second >= 0.05 }
+        if (firstWet < 0) return "Kein Niederschlag in den nächsten ${nc.size / 4} Stunden"
+        val sum = nc.sumOf { it.second }
+        if (wetNow) {
+            val dry = nc.indexOfFirst { it.second < 0.05 }
+            return if (dry < 0) "Niederschlag hält an  ·  ${Fmt.mm(sum)} mm"
+            else "Niederschlag bis etwa ${f.hhmm(nc[dry].first)}"
+        }
+        return "Niederschlag ab etwa ${f.hhmm(nc[firstWet].first)}  ·  ${Fmt.mm(sum)} mm"
+    }
+}
+
+/** Uhrzeit (lokal am Ort) aus Millisekunden. */
+fun Forecast.hhmmLocal(ms: Long): String = hhmm(ms / 1000)
