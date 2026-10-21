@@ -201,7 +201,7 @@ object RunCheck {
         }
         val b = best ?: return null
         val kind = if (b.second == GREEN) "gute Bedingungen" else "etwas besser"
-        val day = if (f.cal(b.first).get(java.util.Calendar.DAY_OF_YEAR) != f.cal(now).get(java.util.Calendar.DAY_OF_YEAR)) "morgen " else ""
+        val day = if (f.cal(b.first).get(java.util.Calendar.DAY_OF_YEAR) != f.cal(start).get(java.util.Calendar.DAY_OF_YEAR)) "morgen " else ""
         return "Besser: $day${f.hhmm(b.first)}–${f.hhmm(b.first + 7200)} · $kind"
     }
 
