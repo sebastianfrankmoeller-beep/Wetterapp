@@ -115,11 +115,11 @@ object WidgetRenderer {
 
         val rest = h - y - pad
         when (effMode) {
-            MODE_HOURS -> hoursWithRain(c, f, y, rest, w, pad, d, p, text)
+            MODE_HOURS -> hoursWithRain(c, f, y, rest, w.toFloat(), pad, d, p, text)
             MODE_DAYS -> if (rest > 26 * d) drawDays(c, f, pad, y, w - 2 * pad, rest, d, p, text)
             MODE_ALL -> if (rest < 142 * d) {
                 // zu wenig Platz für Tage: Stunden größer + Regen-Hinweis statt leerer Fläche
-                hoursWithRain(c, f, y, rest, w, pad, d, p, text)
+                hoursWithRain(c, f, y, rest, w.toFloat(), pad, d, p, text)
             } else {
                 if (rest > 50 * d) {
                     val hh = min(86 * d, rest)
