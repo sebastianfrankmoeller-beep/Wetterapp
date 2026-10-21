@@ -18,6 +18,7 @@ import de.basti.wetter.WeatherIcons
 import de.basti.wetter.tempColor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** Zeichnet den Widget-Inhalt als Bild – dadurch sieht er exakt aus wie die App. */
@@ -201,43 +202,57 @@ object WidgetRenderer {
         val rowH = 28 * d
         val n = min(f.days.size, (h / rowH).toInt())
         if (n <= 0) return
-        val lo = f.days.take(n).minOf { it.min }
-        val hi = f.days.take(n).maxOf { it.max }
-        val span = max(1.0, hi - lo)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val barL = x + w * 0.55f
-        val barR = x + w - 40 * d
+        val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         for (i in 0 until n) {
             val day = f.days[i]
             val cy = y + i * rowH + rowH / 2
+            val base = cy + 4.5f * d
+
+            // Tag und Symbol
             text.textAlign = Paint.Align.LEFT
-            text.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            text.typeface = medium
             text.textSize = 13 * d
             text.color = p.text
-            c.drawText(f.dayLabel(day, i), x, cy + 4.5f * d, text)
+            c.drawText(f.dayLabel(day, i), x, base, text)
             WeatherIcons.draw(c, day.code, true, x + 80 * d, cy, 22 * d, p)
-            if (day.precip >= 0.3 && barL - (x + 96 * d) > 36 * d) {
-                text.typeface = Typeface.DEFAULT
-                text.textSize = 11 * d
-                text.color = if (day.snow > 0.3) p.snow else p.rain
-                c.drawText("${Fmt.mm(day.precip)} mm", x + 96 * d, cy + 4 * d, text)
-            }
-            text.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            text.textSize = 13 * d
+
+            // Rechts: "Tief / Hoch" – Hoch hell und leicht in Temperaturfarbe getönt
             text.textAlign = Paint.Align.RIGHT
+            text.textSize = 14 * d
+            text.color = Ui.mix(p.text, tempColor(day.max, p), 0.45f)
+            val maxStr = Fmt.temp(day.max)
+            c.drawText(maxStr, x + w, base, text)
+            val maxW = text.measureText(maxStr)
+            text.typeface = Typeface.DEFAULT
             text.color = p.muted
-            c.drawText(Fmt.temp(day.min), barL - 6 * d, cy + 4.5f * d, text)
-            text.color = p.text
-            c.drawText(Fmt.temp(day.max), x + w, cy + 4.5f * d, text)
-            val bh = 5 * d
-            paint.shader = null
-            paint.color = p.surfaceHi
-            c.drawRoundRect(RectF(barL, cy - bh / 2, barR, cy + bh / 2), bh, bh, paint)
-            val l = barL + ((day.min - lo) / span * (barR - barL)).toFloat()
-            val r = barL + ((day.max - lo) / span * (barR - barL)).toFloat()
-            paint.shader = LinearGradient(l, 0f, r, 0f, tempColor(day.min, p), tempColor(day.max, p), Shader.TileMode.CLAMP)
-            c.drawRoundRect(RectF(l, cy - bh / 2, max(r, l + bh), cy + bh / 2), bh, bh, paint)
+            val sep = " / "
+            c.drawText(sep, x + w - maxW, base, text)
+            val sepW = text.measureText(sep)
+            val minStr = Fmt.temp(day.min)
+            c.drawText(minStr, x + w - maxW - sepW, base, text)
+            val tempLeft = x + w - maxW - sepW - text.measureText(minStr)
+
+            // Mitte: Niederschlag (Regen in mm bzw. Schnee in cm) mit Wahrscheinlichkeit
+            val px = x + 100 * d
+            val room = tempLeft - px - 10 * d
+            if (room > 34 * d && (day.precip >= 0.2 || (!day.probMax.isNaN() && day.probMax >= 30))) {
+                val snowy = day.snow > 0.3
+                text.textAlign = Paint.Align.LEFT
+                text.textSize = 12 * d
+                text.typeface = medium
+                text.color = if (snowy) p.snow else p.rain
+                val amount = if (snowy) "${Fmt.mm(day.snow)} cm" else "${Fmt.mm(day.precip)} mm"
+                c.drawText(amount, px, base, text)
+                val aw = text.measureText(amount)
+                if (!day.probMax.isNaN() && room - aw > 40 * d) {
+                    text.typeface = Typeface.DEFAULT
+                    text.textSize = 11 * d
+                    text.color = p.muted
+                    c.drawText("  ${day.probMax.roundToInt()} %", px + aw, base, text)
+                }
+            }
         }
         text.textAlign = Paint.Align.LEFT
+        text.typeface = Typeface.DEFAULT
     }
 }

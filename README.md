@@ -11,7 +11,8 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   Langes Drücken auf einen Favoriten: verschieben oder entfernen.
   Erneutes Antippen des gewählten Ortes lädt neu.
 - **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck
-- **Regen der nächsten 3 Stunden** in 15-Minuten-Schritten (DWD ICON-D2)
+- **Regen der nächsten 3 Stunden** (DWD ICON-D2): „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
+  antippen oder ziehen zeigt Uhrzeit und Menge
 - **Stündlich** bis 15 Tage: Symbol, Temperaturkurve, Niederschlag (mm), Regenwahrscheinlichkeit, Wind.
   Eine grüne Linie markiert, wo von ICON-D2 auf ECMWF umgeschaltet wird.
 - **15 Tage**: Min/Max mit Temperaturbalken, Niederschlag, Wahrscheinlichkeit.

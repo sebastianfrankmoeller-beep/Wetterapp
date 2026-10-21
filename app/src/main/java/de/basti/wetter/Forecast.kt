@@ -96,7 +96,8 @@ class Forecast(
     val days: List<Day>,
     val nowcast: List<Pair<Long, Double>>, // 15-Minuten-Niederschlag (mm) der nächsten Stunden, nur ICON-D2-Gebiet
     val fetchedAt: Long,      // Millisekunden
-    val hasD2: Boolean
+    val hasD2: Boolean,
+    val nowcastSnow: Boolean = false  // Niederschlag in den nächsten Stunden überwiegend als Schnee
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -199,7 +200,7 @@ object WeatherApi {
         val ecUrl = "$BASE?${loc(p)}&models=ecmwf_ifs&hourly=$VARS,precipitation_probability,lightning_density" +
             "&daily=sunrise,sunset&forecast_days=16&past_hours=1&timeformat=unixtime&timezone=auto"
         val d2Url = "$BASE?${loc(p)}&models=icon_d2&hourly=$VARS,lightning_potential,snowfall_height" +
-            "&minutely_15=precipitation&forecast_minutely_15=12" +
+            "&minutely_15=precipitation,snowfall&forecast_minutely_15=13" +
             "&forecast_hours=48&past_hours=1&timeformat=unixtime&timezone=auto"
 
         // Beide Abfragen parallel.
@@ -309,14 +310,23 @@ object WeatherApi {
 
         // Nowcast (15 Minuten) aus ICON-D2
         val nowcast = ArrayList<Pair<Long, Double>>()
+        var nowcastSnowy = false
         d2o?.optJSONObject("minutely_15")?.let { m ->
             val mt = m.optJSONArray("time")
             val mp = m.optJSONArray("precipitation")
+            val ms = m.optJSONArray("snowfall")
+            var rain = 0.0; var snow = 0.0
             if (mt != null) for (i in 0 until mt.length()) {
                 val t = mt.getLong(i)
                 val v = mp.d(i)
-                if (t + 900 > nowSec && !v.isNaN()) nowcast.add(t to v)
+                if (t + 900 > nowSec && !v.isNaN()) {
+                    nowcast.add(t to v)
+                    // Schneefall in cm ≈ 0,7 × mm Wasser
+                    val sn = ms.d(i).let { if (it.isNaN()) 0.0 else it / 0.7 }
+                    snow += sn.coerceAtMost(v); rain += (v - sn).coerceAtLeast(0.0)
+                }
             }
+            nowcastSnowy = snow > rain && snow > 0.05
         }
 
         // Sonnenauf-/untergang je Tag
@@ -329,7 +339,7 @@ object WeatherApi {
         }
 
         val days = buildDays(hours, offset, sun)
-        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2)
+        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {

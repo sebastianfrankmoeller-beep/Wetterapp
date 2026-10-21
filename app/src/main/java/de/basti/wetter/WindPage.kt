@@ -221,7 +221,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
 
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        strokeWidth = 1.5f * density
+        strokeWidth = 1.15f * density
         strokeCap = Paint.Cap.ROUND
         color = Color.WHITE
     }
@@ -278,8 +278,8 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
                 val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
                 fs[i] = s
                 colorsArr[i] = when (layer) {
-                    Layer.WIND -> Ui.withAlpha(WindColors.of(s), 135)
-                    Layer.GUST -> Ui.withAlpha(WindColors.of(g.sample(g.gust, hr, geo.latitude, geo.longitude)), 135)
+                    Layer.WIND -> Ui.withAlpha(WindColors.of(s), 78)
+                    Layer.GUST -> Ui.withAlpha(WindColors.of(g.sample(g.gust, hr, geo.latitude, geo.longitude)), 78)
                     Layer.THUNDER -> ThunderColors.of(g.sample(g.thunder, hr, geo.latitude, geo.longitude))
                 }
             } else {
@@ -296,7 +296,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
             trailCanvas = Canvas(trails!!)
         } else trailCanvas?.drawColor(0, PorterDuff.Mode.CLEAR)
 
-        val count = ((w.toLong() * h) / (90 * 90 * density * density / 4)).toInt().coerceIn(600, 2600)
+        val count = ((w.toLong() * h) / (90 * 90 * density * density / 4)).toInt().coerceIn(420, 1200)
         if (px.size != count) { px = FloatArray(count); py = FloatArray(count); age = IntArray(count) }
         for (i in 0 until count) respawn(i, w, h, randomAge = true)
         dirty = false
@@ -368,7 +368,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
 
         // 2) Partikel weiterbewegen und Schweife zeichnen
         val tc = trailCanvas ?: return
-        tc.drawColor(Color.argb(232, 0, 0, 0), PorterDuff.Mode.DST_IN)
+        tc.drawColor(Color.argb(222, 0, 0, 0), PorterDuff.Mode.DST_IN)
         for (i in px.indices) {
             val x = px[i]
             val y = py[i]
@@ -376,7 +376,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
             val nx = x + tmp[0]
             val ny = y + tmp[1]
             val sp = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
-            linePaint.alpha = (110 + min(145f, sp * 60f)).toInt()
+            linePaint.alpha = (80 + min(120f, sp * 50f)).toInt()
             tc.drawLine(x, y, nx, ny, linePaint)
             px[i] = nx
             py[i] = ny
@@ -465,7 +465,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
 
-    val map: MapView = MapSupport.createMap(ctx, p, center, 6.0)
+    val map: MapView = MapSupport.createMap(ctx, p, center, 6.0, bright = true)
     private val d = resources.displayMetrics.density
     private val overlay = WindOverlay(map, p, d)
     private val marker = PlaceMarker(p, d)

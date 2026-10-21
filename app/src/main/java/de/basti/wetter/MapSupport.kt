@@ -40,9 +40,10 @@ object MapSupport {
     }
 
     /** Graustufen, invertiert und abgedunkelt, mit leichtem Blaustich – passt zum App-Design. */
-    private fun darkFilter(): ColorMatrixColorFilter {
-        val k = 0.52f
-        val off = 255f * k + 16f
+    private fun darkFilter(bright: Boolean): ColorMatrixColorFilter {
+        // bright: kräftigerer Kontrast (Land heller, Linien deutlicher) – für die Windkarte
+        val k = if (bright) 0.66f else 0.52f
+        val off = 255f * k + if (bright) 34f else 16f
         val r = 0.30f * k; val g = 0.59f * k; val b = 0.11f * k
         return ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
             -r, -g, -b, 0f, off,
@@ -59,7 +60,7 @@ object MapSupport {
         return ColorMatrixColorFilter(cm)
     }
 
-    fun createMap(ctx: Context, p: Ui.Palette, center: GeoPoint, zoom: Double): MapView {
+    fun createMap(ctx: Context, p: Ui.Palette, center: GeoPoint, zoom: Double, bright: Boolean = false): MapView {
         configure(ctx)
         val map = MapView(ctx)
         map.setTileSource(TileSourceFactory.MAPNIK)
@@ -71,7 +72,7 @@ object MapSupport {
         map.isHorizontalMapRepetitionEnabled = true
         map.isVerticalMapRepetitionEnabled = false
         map.setScrollableAreaLimitLatitude(MapView.getTileSystem().maxLatitude, MapView.getTileSystem().minLatitude, 0)
-        map.overlayManager.tilesOverlay.setColorFilter(if (p.dark) darkFilter() else lightFilter())
+        map.overlayManager.tilesOverlay.setColorFilter(if (p.dark) darkFilter(bright) else lightFilter())
         map.overlayManager.tilesOverlay.setLoadingBackgroundColor(p.bg)
         map.overlayManager.tilesOverlay.setLoadingLineColor(p.bg)
         map.setBackgroundColor(p.bg)

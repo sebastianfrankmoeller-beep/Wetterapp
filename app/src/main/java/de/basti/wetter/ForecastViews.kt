@@ -1,6 +1,7 @@
 package de.basti.wetter
 
 import android.annotation.SuppressLint
+import kotlin.math.sqrt
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
@@ -322,44 +323,159 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
     }
 }
 
-/** Niederschlag der nächsten 2–3 Stunden in 15-Minuten-Schritten (ICON-D2). */
+/** Niederschlagsstärke aus mm je Stunde (DWD-Einteilung). */
+object RainRate {
+    val NAMES = arrayOf("trocken", "leicht", "mäßig", "stark")
+    fun level(mmh: Double): Int = when {
+        mmh < 0.1 -> 0
+        mmh < 2.5 -> 1
+        mmh < 10.0 -> 2
+        else -> 3
+    }
+    /** Höhe 0..1 – wurzelförmig, damit auch leichter Regen gut sichtbar ist. */
+    fun height(mmh: Double): Float = if (mmh <= 0.0) 0f else sqrt(min(mmh, 16.0) / 16.0).toFloat()
+}
+
+/**
+ * Regen der nächsten 3 Stunden (15-Minuten-Werte, ICON-D2) als weiche Kurve.
+ * Hilfslinien für leicht / mäßig / stark; Antippen oder Ziehen zeigt den Wert.
+ */
 class NowcastView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
     var data: List<Pair<Long, Double>> = emptyList()
-        set(v) { field = v; invalidate() }
+        set(v) { field = v; sel = -1; invalidate() }
     var forecast: Forecast? = null
+    var snowy = false
+        set(v) { field = v; invalidate() }
 
     private val d = resources.displayMetrics.density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND }
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; pathEffect = DashPathEffect(floatArrayOf(3 * resources.displayMetrics.density, 4 * resources.displayMetrics.density), 0f) }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    private var sel = -1
+
+    private val left = 46 * d       // Platz für die Stufen-Beschriftung
+    private val top = 22 * d        // Platz für den Antipp-Wert
+    private val chartH = 92 * d
+    private val bottomPad = 22 * d
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (64 * d).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (top + chartH + bottomPad).toInt())
+    }
+
+    private fun rate(i: Int) = data[i].second * 4.0   // 15-Minuten-Menge → mm/h
+
+    private fun xOf(i: Int): Float {
+        val w = width - left - 6 * d
+        return left + if (data.size <= 1) 0f else w * i / (data.size - 1)
+    }
+
+    private fun yOf(h: Float) = top + chartH * (1 - h)
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (data.size < 2) return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                val w = width - left - 6 * d
+                val i = (((e.x - left) / w) * (data.size - 1)).roundToInt().coerceIn(0, data.size - 1)
+                if (i != sel) { sel = i; invalidate() }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                postDelayed({ sel = -1; invalidate() }, 2500)
+            }
+        }
+        return true
     }
 
     override fun onDraw(c: Canvas) {
         val n = data.size
-        if (n == 0) return
-        val w = width.toFloat()
-        val bw = w / n
-        val bottom = 44 * d
-        val maxH = 40 * d
-        for ((i, pt) in data.withIndex()) {
-            val mm = pt.second
-            val x = i * bw
-            fill.color = p.surfaceHi
-            c.drawRoundRect(RectF(x + 2 * d, bottom - 3 * d, x + bw - 2 * d, bottom), 2 * d, 2 * d, fill)
-            if (mm >= 0.02) {
-                // 15-Minuten-Wert, voll bei 1,5 mm (= 6 mm/h)
-                val bh = max(4 * d, (min(mm, 1.5) / 1.5 * maxH).toFloat())
-                fill.color = p.rain
-                c.drawRoundRect(RectF(x + 2 * d, bottom - bh, x + bw - 2 * d, bottom), 3 * d, 3 * d, fill)
-            }
-            if (i % 4 == 0) {
-                text.textSize = 10.5f * d
-                text.color = p.muted
-                val label = forecast?.hhmm(pt.first) ?: ""
-                c.drawText(if (i == 0) "jetzt" else label, x + bw / 2, bottom + 15 * d, text)
-            }
+        if (n < 2) return
+        val base = yOf(0f)
+        val main = if (snowy) p.snow else p.rain
+
+        // Hilfslinien mit Stufen
+        text.textSize = 10.5f * d
+        text.textAlign = Paint.Align.LEFT
+        grid.strokeWidth = 1f
+        for ((lvl, mmh) in listOf(1 to 0.5, 2 to 2.5, 3 to 10.0)) {
+            val y = yOf(RainRate.height(mmh))
+            grid.color = p.border
+            c.drawLine(left, y, width.toFloat(), y, grid)
+            text.color = p.muted
+            c.drawText(RainRate.NAMES[lvl], 0f, y + 4 * d, text)
+        }
+        fill.shader = null
+        fill.color = p.border
+        c.drawRect(left, base, width.toFloat(), base + 1, fill)
+
+        // Weiche Kurve (monoton, schießt nicht über)
+        path.reset()
+        path.moveTo(xOf(0), base)
+        path.lineTo(xOf(0), yOf(RainRate.height(rate(0))))
+        for (i in 1 until n) {
+            val x0 = xOf(i - 1); val y0 = yOf(RainRate.height(rate(i - 1)))
+            val x1 = xOf(i); val y1 = yOf(RainRate.height(rate(i)))
+            val mx = (x0 + x1) / 2
+            path.cubicTo(mx, y0, mx, y1, x1, y1)
+        }
+        path.lineTo(xOf(n - 1), base)
+        path.close()
+
+        // Füllung: nach oben (stärker) kräftiger bzw. violett
+        val strong = if (snowy) p.snow else 0xFF8E5BFF.toInt()
+        fill.shader = LinearGradient(0f, top, 0f, base,
+            intArrayOf(Ui.withAlpha(strong, 235), Ui.withAlpha(main, 200), Ui.withAlpha(main, 70)),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        c.drawPath(path, fill)
+        fill.shader = null
+        // Oberkante
+        path.reset()
+        path.moveTo(xOf(0), yOf(RainRate.height(rate(0))))
+        for (i in 1 until n) {
+            val x0 = xOf(i - 1); val y0 = yOf(RainRate.height(rate(i - 1)))
+            val x1 = xOf(i); val y1 = yOf(RainRate.height(rate(i)))
+            val mx = (x0 + x1) / 2
+            path.cubicTo(mx, y0, mx, y1, x1, y1)
+        }
+        stroke.color = main
+        stroke.strokeWidth = 2.2f * d
+        c.drawPath(path, stroke)
+
+        // Zeitachse alle 30 Minuten
+        text.textSize = 10.5f * d
+        text.color = p.muted
+        val f = forecast
+        for (i in 0 until n step 2) {
+            text.textAlign = when (i) { 0 -> Paint.Align.LEFT; n - 1 -> Paint.Align.RIGHT; else -> Paint.Align.CENTER }
+            val label = if (i == 0) "jetzt" else f?.hhmm(data[i].first) ?: ""
+            c.drawText(label, xOf(i), base + 16 * d, text)
+        }
+
+        // Antippen: Markierung + Wert
+        if (sel in 0 until n) {
+            val x = xOf(sel)
+            val r = rate(sel)
+            stroke.color = p.text
+            stroke.strokeWidth = 1.2f * d
+            c.drawLine(x, top, x, base, stroke)
+            fill.color = p.surface
+            c.drawCircle(x, yOf(RainRate.height(r)), 6 * d, fill)
+            fill.color = main
+            c.drawCircle(x, yOf(RainRate.height(r)), 4 * d, fill)
+            val t = (if (sel == 0) "jetzt" else f?.hhmm(data[sel].first) ?: "") +
+                "  ·  " + (if (r < 0.1) "trocken" else "${Fmt.mm(r)} mm/h · ${RainRate.NAMES[RainRate.level(r)]}")
+            text.textSize = 12.5f * d
+            text.typeface = Ui.TF_MEDIUM
+            text.color = p.text
+            val tw = text.measureText(t)
+            text.textAlign = Paint.Align.LEFT
+            val tx = (x - tw / 2).coerceIn(left, width - tw)
+            c.drawText(t, tx, top - 8 * d, text)
+            text.typeface = android.graphics.Typeface.DEFAULT
         }
     }
 }
