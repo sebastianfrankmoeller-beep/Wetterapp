@@ -60,6 +60,7 @@
             android:foregroundServiceType="location" />
 
         <!-- Erkennt die laufende Google-Maps-Navigation -->
+        <!-- LISTENER-START -->
         <service
             android:name=".MapsNavListener"
             android:exported="true"
@@ -69,6 +70,7 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+        <!-- LISTENER-END -->
 
         <activity
             android:name=".SettingsActivity"

@@ -54,3 +54,20 @@ jobs:
           name: Wetter-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # Testvariante ohne Benachrichtigungszugriff (zur Fehlersuche bei der Installation)
+      - name: Testvariante ohne Maps-Erkennung bauen
+        shell: bash
+        run: |
+          mkdir -p variante
+          cp app/build/outputs/apk/debug/*.apk variante/voll.apk
+          sed -i '/LISTENER-START/,/LISTENER-END/d' app/src/main/AndroidManifest.xml
+          gradle assembleDebug
+          mkdir -p ohne && cp app/build/outputs/apk/debug/*.apk ohne/Wetter-ohne-Maps-Erkennung.apk
+
+      - name: Testvariante bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wetter-APK-Test-ohne-Maps-Erkennung
+          path: ohne/*.apk
+          if-no-files-found: error
