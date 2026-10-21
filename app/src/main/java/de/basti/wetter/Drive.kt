@@ -213,10 +213,9 @@ object DriveWeather {
         for (h in Hazard.values()) {
             var i = 0
             while (i < pts.size) {
-                val sev = haz[i][h]
-                if (sev == null) { i++; continue }
+                val sev: Int = haz[i][h] ?: run { i++; null } ?: continue
                 var j = i
-                var maxSev = sev
+                var maxSev: Int = sev
                 while (j + 1 < pts.size && haz[j + 1][h] != null) { j++; maxSev = max(maxSev, haz[j][h]!!) }
                 val start = max(0.0, pts[i].km - stepKm / 2)
                 val end = pts[j].km + stepKm / 2
