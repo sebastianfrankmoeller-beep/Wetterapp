@@ -100,7 +100,8 @@ class Forecast(
     val hasD2: Boolean,
     val nowcastSnow: Boolean = false,  // Niederschlag in den nächsten Stunden überwiegend als Schnee
     val uv: Map<Long, Double> = emptyMap(),  // UV-Index je Stunde (nächste 24 h)
-    val nowcastRadarUntil: Long = 0    // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
+    val nowcastRadarUntil: Long = 0,   // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
+    val elevation: Double = Double.NaN // Höhe des Ortes in m
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -201,10 +202,10 @@ object WeatherApi {
     /** Lädt beide Modelle und gibt die Rohdaten (für den Zwischenspeicher) zurück. */
     fun fetchRaw(p: Place): String {
         val ecUrl = "$BASE?${loc(p)}&models=ecmwf_ifs&hourly=$VARS,precipitation_probability,lightning_density" +
-            "&daily=sunrise,sunset&forecast_days=16&past_hours=1&timeformat=unixtime&timezone=auto"
+            "&daily=sunrise,sunset&forecast_days=16&past_hours=24&timeformat=unixtime&timezone=auto"
         val d2Url = "$BASE?${loc(p)}&models=icon_d2&hourly=$VARS,lightning_potential,snowfall_height" +
             "&minutely_15=precipitation,snowfall&forecast_minutely_15=13" +
-            "&forecast_hours=48&past_hours=1&timeformat=unixtime&timezone=auto"
+            "&forecast_hours=48&past_hours=24&timeformat=unixtime&timezone=auto"
 
         // UV-Index (Standardmodell, nur für die nächsten Stunden – optional)
         val uvUrl = "$BASE?${loc(p)}&hourly=uv_index&forecast_hours=24&past_hours=1&timeformat=unixtime&timezone=auto"
@@ -260,6 +261,8 @@ object WeatherApi {
 
         val nowSec = System.currentTimeMillis() / 1000
         val currentHour = nowSec - (nowSec % 3600)
+        // Beginn des heutigen Tages (Ortszeit): für Tageshöchst- und Tiefstwerte des ganzen Tages
+        val todayStart = (nowSec + offset).let { it - Math.floorMod(it, 86400L) } - offset
 
         val hours = ArrayList<Hour>()
         val et = e.time ?: JSONArray()
@@ -280,7 +283,7 @@ object WeatherApi {
         var hasD2 = false
         for (i in 0 until et.length()) {
             val t = et.getLong(i)
-            if (t < currentHour) continue
+            if (t < todayStart) continue
             val j = d2Index[t]
             val useD2 = j != null && !dTemp.d(j).isNaN() && !dCode.d(j).isNaN()
             if (useD2) hasD2 = true
@@ -363,14 +366,16 @@ object WeatherApi {
             }
         }
 
+        // Tage aus allen Stunden ab Mitternacht; angezeigt werden die Stunden ab jetzt
         val days = buildDays(hours, offset, sun)
+        hours.removeAll { it.t < currentHour }
 
         val uv = HashMap<Long, Double>()
         root.optJSONObject("uv")?.optJSONObject("hourly")?.let { u ->
             val tt = u.optJSONArray("time"); val vv = u.optJSONArray("uv_index")
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
-        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil)
+        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN))
     }
 
     private fun dayStart(t: Long, offset: Int): Long {

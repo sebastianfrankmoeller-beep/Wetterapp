@@ -78,18 +78,16 @@ object RunCheck {
         return GREEN to null
     }
 
-    fun evaluate(f: Forecast, type: Int, warnings: List<Warning>?): Result? {
+    /**
+     * 15-Minuten-Abschnitte ab [start]: Regen aus dem Kurzfrist-Nowcast (Radar/ICON-D2), wo vorhanden,
+     * sonst Stundenwert. Wird für den Verlauf UND die Suche nach einem besseren Zeitfenster benutzt.
+     */
+    private fun buildSlots(f: Forecast, start: Long, n: Int): List<Slot> {
         val hs = f.hours
-        if (hs.size < 3) return null
-        val now = System.currentTimeMillis() / 1000
-        val start = now - now % 900
-        val slotsN = 8
         val nc = f.nowcast.associate { it.first to it.second }
-
-        val slots = (0 until slotsN).map { k ->
+        return (0 until n).map { k ->
             val t = start + k * 900L
             val h = hourAt(hs, t)
-            // Regen: 15-Minuten-Wert (ICON-D2) bevorzugt, sonst Stundenwert
             val ncKey = nc.keys.lastOrNull { it <= t + 450 && it > t - 900 }
             val rain = if (ncKey != null) nc[ncKey]!! * 4 else (h?.precip ?: 0.0)
             val snowy = if (ncKey != null) f.nowcastSnow else (h != null && h.snow > 0.05 && h.snow * 0.7 >= h.precip * 0.5)
@@ -100,6 +98,15 @@ object RunCheck {
             Slot(t, rain, snowy, temp, feels, interp(hs, t) { it.wind }, gust, h?.windDir ?: Double.NaN,
                 h?.thunder ?: 0, h?.isDay ?: true, lvl, why)
         }
+    }
+
+    fun evaluate(f: Forecast, type: Int, warnings: List<Warning>?): Result? {
+        val hs = f.hours
+        if (hs.size < 3) return null
+        val now = System.currentTimeMillis() / 1000
+        val start = now - now % 900
+        val slotsN = 8
+        val slots = buildSlots(f, start, slotsN)
 
         // Amtliche Warnungen, die in die 2 Stunden fallen
         val end = start + slotsN * 900L
@@ -166,25 +173,26 @@ object RunCheck {
         if (uvMax != null && uvMax >= 5) hints.add(GlyphView.Kind.SUN to "UV-Index ${uvMax.roundToInt()} – Sonnenschutz")
         for (w in relevant.take(2)) if (w !== warnRed) hints.add(GlyphView.Kind.WARNING to "Warnung: ${titleCase(w.event)} (${w.timeRange()})")
 
-        val better = if (level == GREEN) null else betterWindow(f, now, level)
+        val better = if (level == GREEN) null else betterWindow(f, start, level)
 
         return Result(level, headline, reason, clothing, clothingNote, slots, hints, better)
     }
 
     /** Sucht in den nächsten 12 Stunden ein 2-Stunden-Fenster mit besserer Bewertung (tagsüber bevorzugt). */
-    private fun betterWindow(f: Forecast, now: Long, current: Int): String? {
-        val hs = f.hours
+    /**
+     * Sucht in den nächsten 12 Stunden ein 2-Stunden-Fenster, das wirklich besser ist –
+     * mit denselben 15-Minuten-Daten wie der Verlauf und frühestens 30 Minuten nach jetzt.
+     */
+    private fun betterWindow(f: Forecast, start: Long, current: Int): String? {
+        val lastHour = f.hours.lastOrNull()?.t ?: return null
         var best: Pair<Long, Int>? = null
-        var s = now - now % 1800 + 1800
-        while (s < now + 12 * 3600) {
-            var lvl = GREEN
-            var t = s
-            while (t < s + 7200) {
-                val h = hourAt(hs, t) ?: break
-                lvl = max(lvl, rate(h.precip, h.snow > 0.05, h.temp, h.feels, h.gust, h.thunder, h.code).first)
-                t += 1800
-            }
-            val night = hourAt(hs, s)?.isDay == false
+        var s = start + 1800
+        // auf halbe Stunden runden, damit die Uhrzeiten glatt sind
+        s += (1800 - s % 1800) % 1800
+        while (s < start + 12 * 3600 && s + 7200 <= lastHour + 3600) {
+            val slots = buildSlots(f, s, 8)
+            val lvl = slots.maxOf { it.level }
+            val night = !slots.first().isDay && !slots.last().isDay
             if (lvl < current && !night) {
                 if (best == null || lvl < best.second) best = s to lvl
                 if (lvl == GREEN) break
@@ -222,9 +230,10 @@ object RunCheck {
     private fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
     fun titleCase(s: String) = s.split(" ").joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.uppercase() } }
 
+    /** Ampelfarben – bewusst fest, unabhängig von der gewählten Akzentfarbe. */
     fun color(level: Int, p: Ui.Palette): Int = when (level) {
-        GREEN -> p.accent
-        YELLOW -> p.warn
-        else -> p.danger
+        GREEN -> if (p.dark) 0xFF34D07B.toInt() else 0xFF16A34A.toInt()
+        YELLOW -> if (p.dark) 0xFFF5B544.toInt() else 0xFFC77700.toInt()
+        else -> if (p.dark) 0xFFFF5A4F.toInt() else 0xFFE5392F.toInt()
     }
 }

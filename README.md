@@ -134,4 +134,4 @@ Versionsnummer steigt mit jedem Lauf – eine neue APK lässt sich einfach über
 | `Ui.kt`, `Glyph.kt`, `MapSupport.kt` | Farben, Symbole, Kartengrundlage |
 
 Datenquellen: Open-Meteo (CC BY 4.0), Deutscher Wetterdienst, ECMWF, Bright Sky, Weather data by Rain Viewer.
-Karten: © OpenStreetMap-Mitwirkende, © CARTO.
+Karten: © OpenStreetMap-Mitwirkende.

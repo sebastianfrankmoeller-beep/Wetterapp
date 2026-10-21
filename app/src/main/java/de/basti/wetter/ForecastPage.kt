@@ -310,10 +310,15 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             hints.addView(hint(GlyphView.Kind.BOLT, thunderColor(maxThunder, p),
                 "Gewitterrisiko ${Thunder.NAMES[maxThunder]} $whenTxt$peak"))
         }
-        val wetCold = next.filter { it.precip >= 0.1 && !it.snowLine.isNaN() && it.snowLine < 1500 }
+        // Schneefallgrenze nur, wenn sie für die Höhe des Ortes relevant ist (bis ca. 500 m darüber)
+        val elev = if (f.elevation.isNaN()) 0.0 else f.elevation
+        val wetCold = next.filter { it.precip >= 0.1 && !it.snowLine.isNaN() && it.snowLine < elev + 500 }
         if (wetCold.isNotEmpty()) {
             val line = (wetCold.map { it.snowLine }.average() / 50).roundToInt() * 50
-            hints.addView(hint(GlyphView.Kind.SNOW, p.snow, "Schneefallgrenze um $line m"))
+            val diff = ((line - elev) / 50).roundToInt() * 50
+            val txt = if (diff <= 50) "Schnee bis in deine Höhe – Schneefallgrenze um $line m"
+            else "Schneefallgrenze um $line m – ca. $diff m über dir"
+            hints.addView(hint(GlyphView.Kind.SNOW, p.snow, txt))
         } else if (next.sumOf { it.snow } >= 0.5) {
             hints.addView(hint(GlyphView.Kind.SNOW, p.snow, "Neuschnee bis ${Fmt.mm(next.sumOf { it.snow })} cm in 24 h"))
         }
