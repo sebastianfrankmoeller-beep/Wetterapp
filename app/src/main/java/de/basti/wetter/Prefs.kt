@@ -40,6 +40,30 @@ object Prefs {
     fun theme(ctx: Context) = sp(ctx).getInt("theme", THEME_DARK)
     fun setTheme(ctx: Context, v: Int) = sp(ctx).edit().putInt("theme", v).apply()
 
+    // ------------------------------------------------------------ Eigenes Aussehen
+    fun accent(ctx: Context) = sp(ctx).getInt("st_accent", 0)
+    fun bgStyle(ctx: Context) = sp(ctx).getInt("st_bg", 0)
+    fun bgTone(ctx: Context) = sp(ctx).getInt("st_tone", 0)
+    fun bgVisibility(ctx: Context) = sp(ctx).getInt("st_vis", 50)
+    fun fontSize(ctx: Context) = sp(ctx).getInt("st_fsize", 1)
+    fun fontStyle(ctx: Context) = sp(ctx).getInt("st_fstyle", 0)
+    fun corners(ctx: Context) = sp(ctx).getInt("st_corners", 0)
+
+    /** Setzt einen Aussehens-Wert und erhöht die Stil-Version (damit offene Seiten neu zeichnen). */
+    fun setStyle(ctx: Context, key: String, v: Int) =
+        sp(ctx).edit().putInt(key, v).putInt("st_version", styleVersion(ctx) + 1).apply()
+
+    fun styleVersion(ctx: Context) = sp(ctx).getInt("st_version", 0)
+
+    fun resetStyle(ctx: Context) {
+        val e = sp(ctx).edit()
+        for (k in listOf("st_accent", "st_bg", "st_tone", "st_vis", "st_fsize", "st_fstyle", "st_corners")) e.remove(k)
+        e.putInt("st_version", styleVersion(ctx) + 1).apply()
+    }
+
+    fun bgLuminance(ctx: Context) = sp(ctx).getFloat("st_bglum", 0.5f)
+    fun setBgLuminance(ctx: Context, v: Float) = sp(ctx).edit().putFloat("st_bglum", v).apply()
+
     // ----------------------------------------------------------- Aktueller Standort
     /** Zuletzt bekannte eigene Position (auch fürs Widget). */
     fun lastLocation(ctx: Context): Place? =

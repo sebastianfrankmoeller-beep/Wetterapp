@@ -274,7 +274,7 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             text.textSize = 15.5f * d
             text.color = p.text
             c.drawText(f.dayLabel(day, i), 16 * d, cy - 2 * d, text)
-            text.typeface = android.graphics.Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
             text.textSize = 11.5f * d
             text.color = p.muted
             val src = if (day.fromD2) "ICON-D2" else if (i >= 10) "ECMWF · unsicher" else "ECMWF"
@@ -292,7 +292,7 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
                 text.color = if (snowy) p.snow else p.rain
                 c.drawText(if (snowy) "${Fmt.mm(day.snow)} cm" else "${Fmt.mm(day.precip)} mm", xPrecip, cy - 2 * d, text)
                 if (!day.probMax.isNaN()) {
-                    text.typeface = android.graphics.Typeface.DEFAULT
+                    text.typeface = Ui.TF_REGULAR
                     text.textSize = 11 * d
                     text.color = p.muted
                     c.drawText("${day.probMax.roundToInt()} %", xPrecip, cy + 13 * d, text)
@@ -475,7 +475,7 @@ class NowcastView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             text.textAlign = Paint.Align.LEFT
             val tx = (x - tw / 2).coerceIn(left, width - tw)
             c.drawText(t, tx, top - 8 * d, text)
-            text.typeface = android.graphics.Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
         }
     }
 }

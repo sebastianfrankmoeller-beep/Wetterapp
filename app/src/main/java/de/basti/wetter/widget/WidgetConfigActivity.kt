@@ -98,7 +98,7 @@ class WidgetConfigActivity : Activity() {
         add(save, 0)
 
         setContentView(ScrollView(this).apply {
-            setBackgroundColor(p.bg)
+            background = Ui.background(this@WidgetConfigActivity, p)
             isVerticalScrollBarEnabled = false
             addView(root)
         })

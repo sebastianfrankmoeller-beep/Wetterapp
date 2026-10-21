@@ -22,7 +22,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     private lateinit var p: Ui.Palette
-    private lateinit var content: FrameLayout
+    private lateinit var content: SwipeFrame
     private lateinit var forecastPage: ForecastPage
     private lateinit var search: SearchPanel
     private var radarPage: RadarPage? = null
@@ -45,11 +45,16 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         p = Ui.palette(this)
-        Ui.applySystemBars(this, p, p.surface)
+        Ui.applySystemBars(this, p, if (p.glass) p.bg else p.surface)
 
-        val root = FrameLayout(this).apply { setBackgroundColor(p.bg) }
+        val root = FrameLayout(this)
+        Ui.applyBackground(this, root, p)
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content = FrameLayout(this)
+        content = SwipeFrame(this).apply {
+            current = { tab }
+            page = { i -> ensurePage(i) }
+            onSwitch = { i -> selectTab(i) }
+        }
         column.addView(content, LinearLayout.LayoutParams(MATCH, 0, 1f))
         column.addView(buildNav(), LinearLayout.LayoutParams(MATCH, WRAP))
         root.addView(column, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -61,7 +66,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         root.addView(search, FrameLayout.LayoutParams(MATCH, MATCH))
 
         setContentView(root)
-        themeAtStart = Prefs.theme(this)
+        themeAtStart = Prefs.theme(this) * 100000 + Prefs.styleVersion(this)
         WarnCheck.ensureChannel(this)
         WarnScheduler.ensure(this)
         applyIntentPlace(intent)
@@ -155,17 +160,29 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
             t.second.set(t.second.kind, if (on) p.accent else p.muted)
             t.third.setTextColor(if (on) p.accent else p.muted)
         }
-        val center = currentPlace()?.let { GeoPoint(it.lat, it.lon) } ?: GeoPoint(51.0, 10.3)
         forecastPage.visibility = if (i == 0) View.VISIBLE else View.GONE
-
-        if (i == 1 && radarPage == null) {
-            radarPage = RadarPage(this, p, center).also { content.addView(it, FrameLayout.LayoutParams(MATCH, MATCH)) }
-        }
-        if (i == 2 && windPage == null) {
-            windPage = WindPage(this, p, center).also { content.addView(it, FrameLayout.LayoutParams(MATCH, MATCH)) }
-        }
+        ensurePage(i)
         radarPage?.let { if (i == 1) { it.visibility = View.VISIBLE; it.onResume() } else { it.visibility = View.GONE; it.onPause() } }
         windPage?.let { if (i == 2) { it.visibility = View.VISIBLE; it.onResume() } else { it.visibility = View.GONE; it.onPause() } }
+    }
+
+    /** Seite i liefern; Radar und Wind werden erst bei Bedarf erzeugt. */
+    private fun ensurePage(i: Int): View? {
+        val center = currentPlace()?.let { GeoPoint(it.lat, it.lon) } ?: GeoPoint(51.0, 10.3)
+        return when (i) {
+            0 -> forecastPage
+            1 -> radarPage ?: RadarPage(this, p, center).also {
+                it.visibility = View.GONE
+                content.addView(it, FrameLayout.LayoutParams(MATCH, MATCH))
+                radarPage = it
+            }
+            2 -> windPage ?: WindPage(this, p, center).also {
+                it.visibility = View.GONE
+                content.addView(it, FrameLayout.LayoutParams(MATCH, MATCH))
+                windPage = it
+            }
+            else -> null
+        }
     }
 
     // ------------------------------------------------------------- Orte
@@ -459,7 +476,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onResume() {
         super.onResume()
-        if (Prefs.theme(this) != themeAtStart) { recreate(); return }
+        if (Prefs.theme(this) * 100000 + Prefs.styleVersion(this) != themeAtStart) { recreate(); return }
         // Noch nichts angezeigt (z. B. Standort erst in den Einstellungen erlaubt/eingeschaltet) → erneut versuchen
         if (shown == null && Prefs.selected(this) == Prefs.CURRENT && Locator.hasPermission(this) && !firstResume) locateAndLoad()
         firstResume = false

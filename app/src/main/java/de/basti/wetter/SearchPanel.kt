@@ -44,7 +44,7 @@ class SearchPanel(ctx: Context, private val p: Ui.Palette, private val cb: Callb
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(p.bg)
+        background = Ui.background(ctx, p)
         isClickable = true
         setPadding(dp(16), dp(14), dp(16), 0)
 

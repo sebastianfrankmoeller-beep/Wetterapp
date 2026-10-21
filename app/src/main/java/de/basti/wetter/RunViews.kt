@@ -102,7 +102,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         }
 
         // Zeitachse alle 30 Minuten
-        text.typeface = android.graphics.Typeface.DEFAULT
+        text.typeface = Ui.TF_REGULAR
         text.textSize = 10.5f * d
         text.color = p.muted
         for (i in 0..n step 2) {
@@ -125,7 +125,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             val tw = text.measureText(t)
             val cx = (sel * cw + cw / 2).coerceIn(tw / 2, width - tw / 2)
             c.drawText(t, cx, yInfo, text)
-            text.typeface = android.graphics.Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
         }
     }
 

@@ -28,7 +28,10 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Fahrmodus** mit Google Maps (siehe unten)
 - **Unwetter-Benachrichtigungen** (auch auf der Garmin-Uhr, siehe unten)
 - **Widget** (siehe unten)
-- **Einstellungen** (Zahnrad oben rechts): Darstellung, Warnungen, Berechtigungen
+- **Wischen** zwischen Vorhersage, Radar und Wind (auf den Karten vom Rand aus oder auf den Bedienfeldern)
+- **Eigenes Aussehen** (Einstellungen → Darstellung → Anpassen): Akzentfarbe, Hintergrund (neutral, Verlauf
+  oder eigenes Bild – weichgezeichnet und automatisch abgedunkelt), Schrift (Modern/Kompakt/Rund, Größe), Ecken
+- **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 
 ## Lauf-Check
 

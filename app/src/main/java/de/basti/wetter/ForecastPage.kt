@@ -86,7 +86,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     val status = Ui.tv(ctx, "", 14f, p.muted).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(10)) }
 
     init {
-        setBackgroundColor(p.bg)
+        // Hintergrund kommt vom Fenster (neutral, Verlauf oder eigenes Bild)
         scroll.isVerticalScrollBarEnabled = false
         scroll.addView(root)
         addView(scroll, LayoutParams(MATCH, MATCH))

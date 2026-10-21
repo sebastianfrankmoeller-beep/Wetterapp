@@ -38,11 +38,15 @@ object WidgetRenderer {
     fun palette(ctx: Context, theme: Int): Ui.Palette {
         val night = (ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
-        return when (theme) {
+        val base = when (theme) {
             Prefs.THEME_LIGHT -> Ui.LIGHT
             Prefs.THEME_AUTO -> if (night) Ui.DARK else Ui.LIGHT
             else -> Ui.DARK
         }
+        Ui.applyStyle(ctx)
+        // Akzentfarbe und Ton übernehmen; das Widget hat immer einen festen (nicht gläsernen) Hintergrund
+        return Ui.customize(ctx, base).copy(surface = Ui.TONES[Prefs.bgTone(ctx).coerceIn(0, Ui.TONES.size - 1)]
+            .let { if (base.dark) it.darkSurface else it.lightSurface }, glass = false)
     }
 
     /**
@@ -83,10 +87,10 @@ object WidgetRenderer {
 
         if (f == null || f.now == null) {
             text.color = p.text; text.textSize = 14 * d
-            text.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            text.typeface = Ui.TF_MEDIUM
             c.drawText(placeName, 16 * d, h / 2f - 4 * d, text)
             text.color = p.muted; text.textSize = 12 * d
-            text.typeface = Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
             c.drawText("Noch keine Daten – tippen zum Öffnen", 16 * d, h / 2f + 14 * d, text)
             return bmp
         }
@@ -128,7 +132,7 @@ object WidgetRenderer {
     /** Widget-Inhalt "Lauf": Ampel, Grund, Kleidung, 2-Stunden-Verlauf. */
     private fun drawRun(ctx: Context, c: Canvas, f: Forecast, name: String, x: Float, y: Float, w: Float, h: Float, d: Float, p: Ui.Palette, text: TextPaint) {
         val r = RunCheck.evaluate(f, Prefs.runnerType(ctx), null) ?: return
-        val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val medium = Ui.TF_MEDIUM
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val col = RunCheck.color(r.level, p)
 
@@ -141,7 +145,7 @@ object WidgetRenderer {
         text.color = if (r.level == RunCheck.GREEN) p.text else col
         c.drawText(r.headline, x + 22 * d, y + 17 * d, text)
         val headW = text.measureText(r.headline)
-        text.typeface = Typeface.DEFAULT
+        text.typeface = Ui.TF_REGULAR
         text.textSize = 12 * d
         text.color = p.muted
         text.textAlign = Paint.Align.RIGHT
@@ -163,7 +167,7 @@ object WidgetRenderer {
             text.textSize = 13 * d
             text.color = p.text
             c.drawText(TextUtils.ellipsize(r.clothing, text, w - 24 * d, TextUtils.TruncateAt.END).toString(), x + 24 * d, yy, text)
-            text.typeface = Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
         }
 
         // 2-Stunden-Verlauf als Ampelbalken mit Zeit
@@ -213,12 +217,12 @@ object WidgetRenderer {
         val ix = tx + tempW + 12 * d
         val avail = x + w - ix
         if (avail > 50 * d) {
-            text.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            text.typeface = Ui.TF_MEDIUM
             text.textSize = 14 * d
             text.color = p.text
             val label = (if (isLoc) "⌖ " else "") + name
             c.drawText(TextUtils.ellipsize(label, text, avail, TextUtils.TruncateAt.END).toString(), ix, cy - 4 * d, text)
-            text.typeface = Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
             text.textSize = 12 * d
             text.color = p.muted
             val hl = if (today != null) "  ↑${Fmt.temp(today.max)} ↓${Fmt.temp(today.min)}" else ""
@@ -250,12 +254,12 @@ object WidgetRenderer {
         for (k in 0 until n) {
             val hr = f.hours[k + 1]
             val cx = x + k * cw + cw / 2
-            text.typeface = Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
             text.textSize = 11.5f * d
             text.color = p.muted
             c.drawText("%02d".format(f.hour(hr.t)), cx, y + 12 * d, text)
             WeatherIcons.draw(c, hr.code, hr.isDay, cx, y + 16 * d + icon / 2, icon, p)
-            text.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            text.typeface = Ui.TF_MEDIUM
             text.textSize = 14 * d
             text.color = p.text
             val ty = y + 16 * d + icon + 15 * d
@@ -273,7 +277,7 @@ object WidgetRenderer {
         val rowH = 28 * d
         val n = min(f.days.size, (h / rowH).toInt())
         if (n <= 0) return
-        val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val medium = Ui.TF_MEDIUM
         for (i in 0 until n) {
             val day = f.days[i]
             val cy = y + i * rowH + rowH / 2
@@ -294,7 +298,7 @@ object WidgetRenderer {
             val maxStr = Fmt.temp(day.max)
             c.drawText(maxStr, x + w, base, text)
             val maxW = text.measureText(maxStr)
-            text.typeface = Typeface.DEFAULT
+            text.typeface = Ui.TF_REGULAR
             text.color = p.muted
             val sep = " / "
             c.drawText(sep, x + w - maxW, base, text)
@@ -316,7 +320,7 @@ object WidgetRenderer {
                 c.drawText(amount, px, base, text)
                 val aw = text.measureText(amount)
                 if (!day.probMax.isNaN() && room - aw > 40 * d) {
-                    text.typeface = Typeface.DEFAULT
+                    text.typeface = Ui.TF_REGULAR
                     text.textSize = 11 * d
                     text.color = p.muted
                     c.drawText("  ${day.probMax.roundToInt()} %", px + aw, base, text)
@@ -324,6 +328,6 @@ object WidgetRenderer {
             }
         }
         text.textAlign = Paint.Align.LEFT
-        text.typeface = Typeface.DEFAULT
+        text.typeface = Ui.TF_REGULAR
     }
 }

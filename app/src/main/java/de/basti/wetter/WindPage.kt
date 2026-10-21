@@ -417,7 +417,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
         bubbleText.typeface = Ui.TF_MEDIUM
         bubbleText.textSize = 15 * d
         val w1 = bubbleText.measureText(line1)
-        bubbleText.typeface = Typeface.DEFAULT
+        bubbleText.typeface = Ui.TF_REGULAR
         bubbleText.textSize = 12.5f * d
         val w2 = max(bubbleText.measureText(line2), line3?.let { bubbleText.measureText(it) } ?: 0f)
         val bw = max(w1, w2) + 28 * d
@@ -438,7 +438,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
         bubbleText.textSize = 15 * d
         bubbleText.color = if (v != null && max(v.speed, v.gust.takeIf { !it.isNaN() } ?: 0f) >= 62) p.warn else p.text
         c.drawText(line1, left + 14 * d, top + 24 * d, bubbleText)
-        bubbleText.typeface = Typeface.DEFAULT
+        bubbleText.typeface = Ui.TF_REGULAR
         bubbleText.textSize = 12.5f * d
         bubbleText.color = if (v != null && !v.gust.isNaN() && v.gust >= 62) p.warn else p.muted
         c.drawText(line2, left + 14 * d, top + 43 * d, bubbleText)

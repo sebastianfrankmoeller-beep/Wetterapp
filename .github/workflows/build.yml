@@ -24,6 +24,13 @@ jobs:
         with:
           gradle-version: 8.7
 
+      # Runde Schrift (Nunito, SIL Open Font License) für die Schriftwahl "Rund"
+      - name: Schrift laden
+        shell: bash
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          curl -sSfL -o app/src/main/assets/fonts/nunito.ttf "https://raw.githubusercontent.com/google/fonts/main/ofl/nunito/Nunito%5Bwght%5D.ttf" || echo "::warning::Schrift nicht geladen – 'Rund' nutzt Standardschrift"
+
       - name: APK bauen
         shell: bash
         run: |

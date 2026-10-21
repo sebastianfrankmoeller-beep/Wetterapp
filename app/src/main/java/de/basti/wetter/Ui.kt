@@ -15,7 +15,7 @@ import android.widget.TextView
 /** Farben und kleine Zeichenhelfer – gleiche Designsprache wie der Tempowarner. */
 object Ui {
 
-    class Palette(
+    data class Palette(
         val dark: Boolean,
         val bg: Int,          // Bildschirmhintergrund
         val surface: Int,     // Karten
@@ -35,7 +35,8 @@ object Ui {
         val rain: Int,
         val snow: Int,
         val cold: Int,
-        val warm: Int
+        val warm: Int,
+        val glass: Boolean = false   // Hintergrund ist Bild/Verlauf → Karten halbtransparent
     )
 
     private fun c(v: Long) = v.toInt()
@@ -84,15 +85,151 @@ object Ui {
         warm = c(0xFFE8642A)
     )
 
-    /** Wählt die Palette nach Einstellung (Automatisch / Dunkel / Hell). Standard: Dunkel. */
+    /** Wählt die Palette nach Einstellung (Automatisch / Dunkel / Hell) und eigenem Aussehen. Standard: Dunkel. */
     fun palette(ctx: Context): Palette {
         val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
-        return when (Prefs.theme(ctx)) {
+        val base = when (Prefs.theme(ctx)) {
             Prefs.THEME_LIGHT -> LIGHT
             Prefs.THEME_AUTO -> if (night) DARK else LIGHT
             else -> DARK
         }
+        applyStyle(ctx)
+        return customize(ctx, base)
+    }
+
+    // ------------------------------------------------------------ Eigenes Aussehen
+
+    class Accent(val name: String, val dark: Int, val light: Int)
+
+    val ACCENTS = listOf(
+        Accent("Mint", 0xFF5BE3A8.toInt(), 0xFF0E9F6E.toInt()),
+        Accent("Blau", 0xFF5AAEFF.toInt(), 0xFF1F74D6.toInt()),
+        Accent("Türkis", 0xFF3DD6D0.toInt(), 0xFF0E8F8B.toInt()),
+        Accent("Violett", 0xFFA98BFA.toInt(), 0xFF7346D6.toInt()),
+        Accent("Rosa", 0xFFF47CBC.toInt(), 0xFFC93783.toInt()),
+        Accent("Koralle", 0xFFFF8070.toInt(), 0xFFD9493A.toInt()),
+        Accent("Orange", 0xFFFFAD52.toInt(), 0xFFC96A00.toInt()),
+        Accent("Gelb", 0xFFF2D24B.toInt(), 0xFFA67C00.toInt())
+    )
+
+    /** Neutrale Hintergrundtöne: (Name, dunkel bg, dunkel Karte, hell bg, hell Karte). */
+    class Tone(val name: String, val darkBg: Int, val darkSurface: Int, val lightBg: Int, val lightSurface: Int)
+
+    val TONES = listOf(
+        Tone("Schwarz", 0xFF0B0C0E.toInt(), 0xFF15171A.toInt(), 0xFFF3F4F6.toInt(), 0xFFFFFFFF.toInt()),
+        Tone("Anthrazit", 0xFF1A1C20.toInt(), 0xFF25282D.toInt(), 0xFFE9EAEC.toInt(), 0xFFF8F8F9.toInt()),
+        Tone("Nachtblau", 0xFF0A1120.toInt(), 0xFF131D31.toInt(), 0xFFEDF2F8.toInt(), 0xFFFAFCFF.toInt()),
+        Tone("Waldgrün", 0xFF0A130F.toInt(), 0xFF14211A.toInt(), 0xFFEDF3EE.toInt(), 0xFFFAFDFA.toInt()),
+        Tone("Aubergine", 0xFF130B16.toInt(), 0xFF211627.toInt(), 0xFFF3EFF6.toInt(), 0xFFFDFBFE.toInt())
+    )
+
+    const val BG_NEUTRAL = 0
+    const val BG_GRADIENT = 1
+    const val BG_IMAGE = 2
+
+    /** Eckenrundung (Faktor auf alle Radien): rund, weich, eckig. */
+    val CORNER_SCALES = floatArrayOf(1f, 0.55f, 0.18f)
+    val TEXT_SCALES = floatArrayOf(0.92f, 1f, 1.1f)
+
+    @Volatile var cornerScale = 1f
+        private set
+    @Volatile var textScale = 1f
+        private set
+
+    var TF_REGULAR: Typeface = Typeface.DEFAULT
+        private set
+    var TF_MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        private set
+    var TF_LIGHT: Typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+        private set
+
+    private var roundFonts: Triple<Typeface, Typeface, Typeface>? = null
+
+    /** Runde Schrift (Nunito) aus den App-Daten; fehlt sie, gilt die Standardschrift. */
+    private fun rounded(ctx: Context): Triple<Typeface, Typeface, Typeface>? {
+        roundFonts?.let { return it }
+        return try {
+            fun w(weight: Int) = Typeface.Builder(ctx.assets, "fonts/nunito.ttf")
+                .setFontVariationSettings("'wght' $weight").build()
+            val t = Triple(w(400), w(650), w(300))
+            roundFonts = t
+            t
+        } catch (e: Exception) { null }
+    }
+
+    /** Schrift, Schriftgröße und Ecken aus den Einstellungen übernehmen. */
+    fun applyStyle(ctx: Context) {
+        cornerScale = CORNER_SCALES[Prefs.corners(ctx).coerceIn(0, 2)]
+        textScale = TEXT_SCALES[Prefs.fontSize(ctx).coerceIn(0, 2)]
+        when (Prefs.fontStyle(ctx)) {
+            1 -> {
+                TF_REGULAR = Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+                TF_MEDIUM = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+                TF_LIGHT = Typeface.create("sans-serif-condensed-light", Typeface.NORMAL)
+            }
+            2 -> {
+                val r = rounded(ctx)
+                TF_REGULAR = r?.first ?: Typeface.DEFAULT
+                TF_MEDIUM = r?.second ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                TF_LIGHT = r?.third ?: Typeface.create("sans-serif-light", Typeface.NORMAL)
+            }
+            else -> {
+                TF_REGULAR = Typeface.DEFAULT
+                TF_MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                TF_LIGHT = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            }
+        }
+    }
+
+    private fun luminance(c: Int): Double {
+        fun ch(v: Int): Double { val x = v / 255.0; return if (x <= 0.03928) x / 12.92 else Math.pow((x + 0.055) / 1.055, 2.4) }
+        return 0.2126 * ch((c shr 16) and 0xFF) + 0.7152 * ch((c shr 8) and 0xFF) + 0.0722 * ch(c and 0xFF)
+    }
+
+    /** Akzentfarbe, Hintergrundton und Glas-Effekt auf die Grundpalette anwenden. */
+    fun customize(ctx: Context, base: Palette): Palette {
+        val acc = ACCENTS[Prefs.accent(ctx).coerceIn(0, ACCENTS.size - 1)]
+        val tone = TONES[Prefs.bgTone(ctx).coerceIn(0, TONES.size - 1)]
+        val accent = if (base.dark) acc.dark else acc.light
+        val onAccent = if (luminance(accent) > 0.4) 0xFF0B0C0E.toInt() else 0xFFFFFFFF.toInt()
+        val bg = if (base.dark) tone.darkBg else tone.lightBg
+        val surface0 = if (base.dark) tone.darkSurface else tone.lightSurface
+        val glass = Prefs.bgStyle(ctx) != BG_NEUTRAL
+        val surface = if (glass) withAlpha(surface0, if (base.dark) 0xC8 else 0xD9) else surface0
+        val surfaceHi = if (base.dark) mix(surface0, 0xFFFFFFFF.toInt(), 0.07f) else mix(surface0, 0xFF000000.toInt(), 0.06f)
+        return base.copy(
+            bg = bg, surface = surface,
+            surfaceHi = if (glass) withAlpha(surfaceHi, 0xE0) else surfaceHi,
+            accent = accent, onAccent = onAccent,
+            border = if (glass) (if (base.dark) 0x26FFFFFF else 0x1F000000) else base.border,
+            glass = glass
+        )
+    }
+
+    /** Seitenhintergrund: neutraler Ton, Verlauf oder eigenes Bild (abgedunkelt bzw. aufgehellt). */
+    fun background(ctx: Context, p: Palette): android.graphics.drawable.Drawable {
+        when (Prefs.bgStyle(ctx)) {
+            BG_GRADIENT -> {
+                val far = mix(p.bg, p.accent, if (p.dark) 0.22f else 0.18f)
+                return GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(far, p.bg, p.bg))
+            }
+            BG_IMAGE -> {
+                val bmp = BgImage.load(ctx)
+                if (bmp != null) {
+                    val img = android.graphics.drawable.BitmapDrawable(ctx.resources, bmp)
+                    img.gravity = android.view.Gravity.FILL
+                    // Deckkraft der Überlagerung: Regler (0–100) und Bildhelligkeit; Bild bleibt immer gedämpft
+                    val vis = Prefs.bgVisibility(ctx).coerceIn(0, 100) / 100f
+                    val lum = BgImage.luminance(ctx)
+                    val needed = if (p.dark) 0.45f + 0.35f * lum else 0.45f + 0.35f * (1 - lum)
+                    val alpha = (1f - vis * 0.55f).coerceIn(needed, 0.95f)
+                    val over = ColorDrawable(withAlpha(p.bg, (alpha * 255).toInt()))
+                    return android.graphics.drawable.LayerDrawable(arrayOf(img, over))
+                }
+            }
+        }
+        return ColorDrawable(p.bg)
     }
 
     fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
@@ -107,7 +244,7 @@ object Ui {
     fun rect(color: Int, radiusPx: Float, strokeColor: Int = 0, strokePx: Int = 0): GradientDrawable =
         GradientDrawable().apply {
             setColor(color)
-            cornerRadius = radiusPx
+            cornerRadius = radiusPx * cornerScale
             if (strokePx > 0) setStroke(strokePx, strokeColor)
         }
 
@@ -124,6 +261,13 @@ object Ui {
             rect(color, radiusPx, strokeColor, strokePx),
             rect(0xFFFFFFFF.toInt(), radiusPx)
         )
+    }
+
+    /** Hintergrund der Seite und Fenster setzen (auch Bild/Verlauf). */
+    fun applyBackground(a: Activity, root: View, p: Palette) {
+        val d = background(a, p)
+        root.background = d
+        a.window.setBackgroundDrawable(ColorDrawable(p.bg))
     }
 
     /** Färbt Statusleiste, Navigationsleiste und Fensterhintergrund passend zum Design. */
@@ -147,12 +291,10 @@ object Ui {
     fun tv(ctx: Context, text: CharSequence, sizeSp: Float, color: Int, bold: Boolean = false): TextView =
         TextView(ctx).apply {
             this.text = text
-            textSize = sizeSp
+            textSize = sizeSp * textScale
             setTextColor(color)
-            typeface = if (bold) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
+            typeface = if (bold) TF_MEDIUM else TF_REGULAR
             includeFontPadding = false
         }
 
-    val TF_LIGHT: Typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-    val TF_MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
 }
