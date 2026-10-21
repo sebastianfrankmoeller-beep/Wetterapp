@@ -48,7 +48,7 @@ jobs:
           "$BT/aapt2" dump badging "$APK" 2>&1 | grep -E "^package|sdkVersion|targetSdk|native-code|application-label:" | while IFS= read -r l; do echo "::notice::$l"; done
           unzip -l "$APK" | tail -1 | while IFS= read -r l; do echo "::notice::$l"; done
 
-
+      - name: APK als Download bereitstellen
         uses: actions/upload-artifact@v4
         with:
           name: Wetter-APK
