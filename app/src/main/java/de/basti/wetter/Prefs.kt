@@ -64,6 +64,10 @@ object Prefs {
     fun bgLuminance(ctx: Context) = sp(ctx).getFloat("st_bglum", 0.5f)
     fun setBgLuminance(ctx: Context, v: Float) = sp(ctx).edit().putFloat("st_bglum", v).apply()
 
+    /** Deckkraft des Regenradars in Prozent (15–100). */
+    fun radarOpacity(ctx: Context) = sp(ctx).getInt("radar_opacity", 60)
+    fun setRadarOpacity(ctx: Context, v: Int) = sp(ctx).edit().putInt("radar_opacity", v.coerceIn(15, 100)).apply()
+
     // ----------------------------------------------------------- Aktueller Standort
     /** Zuletzt bekannte eigene Position (auch fürs Widget). */
     fun lastLocation(ctx: Context): Place? =

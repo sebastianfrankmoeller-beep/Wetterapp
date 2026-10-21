@@ -3,12 +3,15 @@ package de.basti.wetter
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -61,12 +64,31 @@ object MapSupport {
     }
 
     /**
-     * Ortsnamen als eigene Ebene: CARTO verlangt inzwischen einen API-Schlüssel ("API KEY REQUIRED"),
-     * daher kommt die Karte komplett von OpenStreetMap (Ortsnamen sind dort enthalten).
-     * Bleibt als leere Funktion, damit Radar und Wind unverändert aufrufen können.
+     * Kartenlinien und Ortsnamen ÜBER Radar bzw. Windfarben: dieselben OpenStreetMap-Kacheln noch einmal,
+     * aber nur die dunklen Elemente (Schrift, Grenzen, Küsten) bleiben sichtbar – helle Flächen werden durchsichtig.
+     * Wird unter dem Standortpunkt eingefügt, damit dieser oben bleibt.
      */
-    @Suppress("UNUSED_PARAMETER")
-    fun addLabels(map: MapView, p: Ui.Palette, bright: Boolean = false) {}
+    fun addLabels(map: MapView, p: Ui.Palette, bright: Boolean = false) {
+        val ctx = map.context.applicationContext
+        val provider = MapTileProviderBasic(ctx, TileSourceFactory.MAPNIK)
+        val overlay = TilesOverlay(provider, ctx).apply {
+            // Farbe der Linien/Schrift: hell im Dunkelmodus, dunkel im hellen Design
+            val col = if (p.dark) floatArrayOf(236f, 238f, 242f) else floatArrayOf(30f, 32f, 36f)
+            val k = if (bright) 1.2f else 1.3f
+            setColorFilter(ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+                0f, 0f, 0f, 0f, col[0],
+                0f, 0f, 0f, 0f, col[1],
+                0f, 0f, 0f, 0f, col[2],
+                // Deckkraft = je dunkler das Kartenpixel, desto sichtbarer (Land/Straßen ≈ 0, Schrift ≈ 0,85)
+                -0.3f * k, -0.59f * k, -0.11f * k, 0f, 290f
+            ))))
+            setLoadingBackgroundColor(Color.TRANSPARENT)
+            setLoadingLineColor(Color.TRANSPARENT)
+        }
+        provider.tileRequestCompleteHandlers.add(map.tileRequestCompleteHandler)
+        val idx = map.overlays.indexOfFirst { it is PlaceMarker }
+        if (idx >= 0) map.overlays.add(idx, overlay) else map.overlays.add(overlay)
+    }
 
     fun createMap(ctx: Context, p: Ui.Palette, center: GeoPoint, zoom: Double, bright: Boolean = false): MapView {
         configure(ctx)

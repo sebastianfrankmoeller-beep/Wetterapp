@@ -224,6 +224,7 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
 
     override fun draw(c: Canvas, mv: MapView, shadow: Boolean) {
         if (shadow || frames.isEmpty()) return
+        paint.alpha = RadarStyle.alpha
         val t = frames[frame.coerceIn(0, frames.size - 1)]
         val pj = mv.projection
 
@@ -359,7 +360,31 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
                 addView(LegendView(ctx, p), LinearLayout.LayoutParams(dp(96), dp(30)))
             })
             addView(timeline, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
+            // Deckkraft des Radars: stufenlos, bewusst schlichter als die Zeitleiste
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(DropIcon(ctx, p.muted), LinearLayout.LayoutParams(dp(14), dp(16)).apply { leftMargin = dp(6) })
+                addView(Ui.tv(ctx, "Deckkraft", 12f, p.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(6) })
+                addView(android.widget.SeekBar(ctx).apply {
+                    max = 85
+                    progress = Prefs.radarOpacity(ctx) - 15
+                    progressTintList = android.content.res.ColorStateList.valueOf(Ui.withAlpha(p.text, 150))
+                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(p.surfaceHi)
+                    thumbTintList = android.content.res.ColorStateList.valueOf(p.text)
+                    setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(s: android.widget.SeekBar?, v: Int, fromUser: Boolean) {
+                            if (!fromUser) return
+                            RadarStyle.setPercent(v + 15)
+                            map.invalidate()
+                        }
+                        override fun onStartTrackingTouch(s: android.widget.SeekBar?) { parent?.requestDisallowInterceptTouchEvent(true) }
+                        override fun onStopTrackingTouch(s: android.widget.SeekBar?) { Prefs.setRadarOpacity(ctx, (s?.progress ?: 45) + 15) }
+                    })
+                }, LinearLayout.LayoutParams(0, dp(28), 1f))
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) })
         }
+        RadarStyle.setPercent(Prefs.radarOpacity(ctx))
         addView(panel, LayoutParams(MATCH, WRAP, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(12)) })
 
         // Titel und Schalter für die Warnkarte oben links
@@ -668,6 +693,7 @@ class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
     }
 
     fun draw(c: Canvas, mv: MapView, t: Long) {
+        paint.alpha = RadarStyle.alpha
         val rt = timeFor(t) ?: return
         val pj = mv.projection
         for (k in visible(rt)) {
@@ -786,6 +812,7 @@ class WarnMapOverlay(private val map: MapView) : Overlay() {
 
     override fun draw(c: Canvas, mv: MapView, shadow: Boolean) {
         if (shadow) return
+        paint.alpha = (RadarStyle.alpha * 0.75f).toInt()
         val pj = mv.projection
         for (k in visible()) {
             val bmp = cache.get(k) ?: continue
@@ -793,5 +820,33 @@ class WarnMapOverlay(private val map: MapView) : Overlay() {
             pj.toPixels(GeoPoint(Tiles.latOf(k.y + 1.0, k.z), Tiles.lonOf(k.x + 1.0, k.z)), b)
             c.drawBitmap(bmp, null, RectF(a.x - 0.5f, a.y - 0.5f, b.x + 0.5f, b.y + 0.5f), paint)
         }
+    }
+}
+
+
+/** Deckkraft des Radars (gemeinsam für DWD-Radar, Weltradar und Warnkarte). */
+object RadarStyle {
+    @Volatile var alpha = 153
+        private set
+    fun setPercent(pct: Int) { alpha = (pct.coerceIn(15, 100) * 255 / 100) }
+}
+
+/** Kleines Tropfen-Symbol für den Deckkraft-Regler. */
+@SuppressLint("ViewConstructor")
+class DropIcon(ctx: Context, private val color: Int) : View(ctx) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = android.graphics.Path()
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        val r = w * 0.42f
+        val cx = w / 2; val cy = h * 0.62f
+        path.reset()
+        path.moveTo(cx, h * 0.05f)
+        path.cubicTo(cx + r * 0.4f, cy - r * 0.9f, cx + r, cy - r * 0.4f, cx + r, cy)
+        path.arcTo(RectF(cx - r, cy - r, cx + r, cy + r), 0f, 180f)
+        path.cubicTo(cx - r, cy - r * 0.4f, cx - r * 0.4f, cy - r * 0.9f, cx, h * 0.05f)
+        path.close()
+        paint.color = color
+        c.drawPath(path, paint)
     }
 }

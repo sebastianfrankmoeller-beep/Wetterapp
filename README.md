@@ -23,7 +23,7 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Amtliche DWD-Warnungen** als farbige Karten oben in der Vorhersage, antippen für den vollen Text
 - **Regenradar** des Deutschen Wetterdienstes: letzte 90 Minuten gemessen + 2 Stunden DWD-Vorhersage,
   abspielbar, mit Zeitleiste. **Weltweit**: außerhalb des DWD-Gebiets automatisch Radar von Rain Viewer
-  (nur Messungen, gröber). Ortsnamen liegen über dem Radar. Zuschaltbare **Warnkarte** mit Legende –
+  (nur Messungen, gröber). Küsten, Grenzen und Ortsnamen liegen über dem Radar; **Deckkraft-Regler** im Bedienfeld. Zuschaltbare **Warnkarte** mit Legende –
   Karte antippen zeigt die Warnungen an dieser Stelle
 - **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
   Karte antippen zeigt Wind, Richtung, Böen (und Gewitterrisiko) an dieser Stelle
