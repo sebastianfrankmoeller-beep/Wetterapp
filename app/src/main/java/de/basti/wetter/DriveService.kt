@@ -130,7 +130,7 @@ class DriveService : Service(), LocationListener {
         ensureChannels(this)
         tts = TextToSpeech(this) { st ->
             if (st == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.GERMANY
+                tts?.setLanguage(Locale.GERMANY)
                 tts?.setAudioAttributes(navAttrs())
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
@@ -170,8 +170,13 @@ class DriveService : Service(), LocationListener {
 
     private fun goForeground() {
         val n = buildStatus()
-        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        else startForeground(NOTIF_ID, n)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            else startForeground(NOTIF_ID, n)
+        } catch (e: Exception) {
+            // z. B. fehlende Standort-Berechtigung: still beenden statt abstürzen
+            stopSelf()
+        }
     }
 
     private fun startLocation() {

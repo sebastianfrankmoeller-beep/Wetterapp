@@ -25,7 +25,17 @@ jobs:
           gradle-version: 8.7
 
       - name: APK bauen
-        run: gradle assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace 2>&1 | tee build.log
+
+      # Fehler als Hinweise im Lauf anzeigen (Kompilierfehler direkt sichtbar)
+      - name: Fehler zusammenfassen
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^e: |error:|What went wrong" -A2 build.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
 
       - name: APK als Download bereitstellen
         uses: actions/upload-artifact@v4
