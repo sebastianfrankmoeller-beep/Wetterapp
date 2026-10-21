@@ -90,8 +90,9 @@ class WindGrid(
             val n = (bb.latNorth + padLat).coerceAtMost(80.0)
             val w = (bb.lonWest - padLon).coerceAtLeast(-179.9)
             val e = (bb.lonEast + padLon).coerceAtMost(179.9)
-            val nx = 9
-            val ny = 12
+            // 7 × 9 Punkte: reicht für die glatten Windfelder, schont das Abruf-Kontingent
+            val nx = 7
+            val ny = 9
             val lats = StringBuilder()
             val lons = StringBuilder()
             for (j in 0 until ny) for (i in 0 until nx) {
@@ -327,9 +328,18 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
     /** Werte an einer Position: Wind km/h, Richtung (woher), Böen km/h, Gewitter-Potenzial. */
     class Values(val speed: Float, val fromDeg: Float, val gust: Float, val thunder: Float)
 
+    /** Exakte Werte für den angetippten Punkt (eigene Abfrage), sobald geladen. */
+    class Exact(val lat: Double, val lon: Double, val times: LongArray, val speed: FloatArray, val dir: FloatArray, val gust: FloatArray, val thunder: FloatArray)
+    @Volatile var exact: Exact? = null
+
     fun valuesAt(geo: GeoPoint): Values? {
         val g = grid ?: return null
         val h = hour.coerceIn(0, g.times.size - 1)
+        val ex = exact
+        if (ex != null && abs(ex.lat - geo.latitude) < 1e-6 && abs(ex.lon - geo.longitude) < 1e-6) {
+            val i = ex.times.indexOfLast { it <= g.times[h] }
+            if (i >= 0) return Values(ex.speed[i], ex.dir[i], ex.gust[i], ex.thunder[i])
+        }
         if (!g.at(h, geo.latitude, geo.longitude, tmp)) return null
         val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
         var deg = Math.toDegrees(kotlin.math.atan2(-tmp[0].toDouble(), -tmp[1].toDouble())).toFloat()
@@ -491,7 +501,10 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             override fun onScroll(event: ScrollEvent?): Boolean { changed(); return false }
             override fun onZoom(event: ZoomEvent?): Boolean { changed(); return false }
         })
-        overlay.onTap = { map.invalidate() }
+        overlay.onTap = {
+            map.invalidate()
+            overlay.tapped?.let { loadExact(it) }
+        }
 
         val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -559,7 +572,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private fun changed() {
         overlay.moved()
         main.removeCallbacks(refetch)
-        main.postDelayed(refetch, 700)
+        main.postDelayed(refetch, 1500)
     }
 
     fun setCenter(g: GeoPoint) {
@@ -568,21 +581,65 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
         changed()
     }
 
+    private var lastFetchAt = 0L
+    private val cache = ArrayList<Pair<BoundingBox, WindGrid>>()   // zuletzt geladene Ausschnitte
+
+    /** Passt ein Gitter zum aktuellen Ausschnitt (deckt ihn ab, nicht viel zu grob, nicht veraltet)? */
+    private fun fits(box: BoundingBox, g: WindGrid, bb: BoundingBox): Boolean {
+        val tooCoarse = (bb.latNorth - bb.latSouth) < (box.latNorth - box.latSouth) / 3.5
+        val stale = System.currentTimeMillis() / 1000 - g.times[0] > 3 * 3600
+        return g.covers(bb) && !tooCoarse && !stale
+    }
+
     private fun ensureData() {
         if (fetching || map.width == 0) return
         val bb = map.boundingBox
         val g = overlay.grid
         val last = lastBox
-        val zoomedIn = last != null && (bb.latNorth - bb.latSouth) < (last.latNorth - last.latSouth) / 3.5
-        val stale = g != null && System.currentTimeMillis() / 1000 - g.times[0] > 3 * 3600
-        if (g != null && g.covers(bb) && !zoomedIn && !stale) return
+        if (g != null && last != null && fits(last, g, bb)) return
+        // Bereits geladenen Ausschnitt wiederverwenden
+        cache.lastOrNull { fits(it.first, it.second, bb) }?.let { (box, grid) ->
+            applyGrid(box, grid)
+            return
+        }
+        // Höchstens alle 30 s neu laden (Abruf-Kontingent schonen)
+        val wait = 30_000 - (System.currentTimeMillis() - lastFetchAt)
+        if (g != null && wait > 0) {
+            main.removeCallbacks(refetch)
+            main.postDelayed(refetch, wait)
+            return
+        }
         fetching = true
+        lastFetchAt = System.currentTimeMillis()
         subLabel.text = "Lade Daten …"
         Thread {
             val res = runCatching { WindGrid.fetch(bb) }
             main.post {
                 fetching = false
                 res.onSuccess { grid ->
+                    cache.add(bb to grid)
+                    while (cache.size > 6) cache.removeAt(0)
+                    applyGrid(bb, grid)
+                }.onFailure { e ->
+                    val limit = (e.message ?: "").contains("limit", ignoreCase = true)
+                    subLabel.text = when {
+                        overlay.grid != null && limit -> "Abruflimit erreicht – zeige vorhandene Daten"
+                        overlay.grid != null -> "Aktualisierung fehlgeschlagen – zeige vorhandene Daten"
+                        limit -> "Abruflimit erreicht – bitte kurz warten"
+                        else -> "Daten nicht verfügbar – keine Verbindung?"
+                    }
+                    // später automatisch erneut versuchen
+                    main.removeCallbacks(refetch)
+                    main.postDelayed(refetch, if (limit) 90_000 else 30_000)
+                }
+            }
+        }.start()
+    }
+
+    private fun applyGrid(bb: BoundingBox, grid: WindGrid) {
+        run {
+            run {
+                run {
                     lastBox = bb
                     val prevT = overlay.grid?.times?.getOrNull(overlay.hour)
                     overlay.grid = grid
@@ -593,8 +650,39 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
                     val keep = prevT?.let { t -> grid.times.indexOfFirst { it == t } } ?: -1
                     setHour(if (keep >= 0) keep else nowIdx)
                     map.invalidate()
-                }.onFailure {
-                    subLabel.text = "Daten nicht verfügbar – Internet?"
+                }
+            }
+        }
+    }
+
+    private val exactCache = HashMap<String, WindOverlay.Exact>()
+
+    /** Genaue Werte für den angetippten Punkt laden (eine einzelne, günstige Abfrage). */
+    private fun loadExact(g: GeoPoint) {
+        val key = "%.2f,%.2f".format(Locale.US, g.latitude, g.longitude)
+        exactCache[key]?.let { overlay.exact = WindOverlay.Exact(g.latitude, g.longitude, it.times, it.speed, it.dir, it.gust, it.thunder); map.invalidate(); return }
+        Thread {
+            val ex = runCatching {
+                val url = "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f".format(Locale.US, g.latitude, g.longitude) +
+                    "&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,lightning_potential,cape&models=icon_seamless" +
+                    "&forecast_hours=48&past_hours=1&timeformat=unixtime&timezone=GMT"
+                val h = JSONObject(Net.get(url, 15000)).getJSONObject("hourly")
+                val t = h.getJSONArray("time")
+                val n = t.length()
+                fun arr(name: String, conv: (Double) -> Double = { it }): FloatArray {
+                    val a = h.optJSONArray(name)
+                    return FloatArray(n) { i -> if (a == null || a.isNull(i)) Float.NaN else conv(a.getDouble(i)).toFloat() }
+                }
+                val lpi = arr("lightning_potential")
+                val cape = arr("cape")
+                WindOverlay.Exact(g.latitude, g.longitude, LongArray(n) { t.getLong(it) },
+                    arr("wind_speed_10m"), arr("wind_direction_10m"), arr("wind_gusts_10m"),
+                    FloatArray(n) { i -> if (!lpi[i].isNaN()) lpi[i] else if (!cape[i].isNaN()) ((cape[i] - 300) / 120).coerceAtLeast(0f) else 0f })
+            }.getOrNull()
+            main.post {
+                if (ex != null) {
+                    exactCache[key] = ex
+                    if (overlay.tapped?.let { abs(it.latitude - g.latitude) < 1e-6 } == true) { overlay.exact = ex; map.invalidate() }
                 }
             }
         }.start()
