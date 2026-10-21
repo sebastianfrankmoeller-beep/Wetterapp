@@ -66,6 +66,10 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val stats = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
     private val nowcastCard: LinearLayout
+    private val runCard = RunCard(ctx, p) { rebindRun() }
+    private val runSection = section("Lauf-Check · nächste 2 Std.")
+    private var lastForecast: Forecast? = null
+    private var lastWarnings: List<Warning>? = null
     private val nowcastText = Ui.tv(ctx, "", 19f, p.text, true)
     private val nowcastSub = Ui.tv(ctx, "", 13.5f, p.muted)
     private val nowcastView = NowcastView(ctx, p)
@@ -136,6 +140,10 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             addView(hints, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         add(hero, 14)
+
+        // ------------------------------------------------------------ Lauf-Check
+        add(runSection, 8)
+        add(runCard, 14)
 
         // ------------------------------------------------------- Regen-Nowcast
         nowcastCard = card().apply {
@@ -299,6 +307,9 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             nowcastSub.visibility = if (sub.isEmpty()) View.GONE else View.VISIBLE
         } else nowcastCard.visibility = View.GONE
 
+        lastForecast = f
+        rebindRun()
+
         hourly.forecast = f
         days.selected = -1
         days.forecast = f
@@ -306,6 +317,19 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
 
         val models = if (f.hasD2) "DWD ICON-D2 (2 km) bis 48 h, danach ECMWF IFS (9 km)" else "ECMWF IFS (9 km)"
         footer.text = "Modelle: $models\nDaten: Open-Meteo · Stand ${f.hhmmLocal(f.fetchedAt)}"
+    }
+
+    /** Lauf-Check neu berechnen (neue Daten, Warnungen oder Läufertyp). */
+    fun rebindRun() {
+        val f = lastForecast ?: return
+        val r = RunCheck.evaluate(f, Prefs.runnerType(context), lastWarnings)
+        runCard.bind(f, r)
+        runSection.visibility = runCard.visibility
+    }
+
+    /** Zum Lauf-Check scrollen (App-Verknüpfung). */
+    fun scrollToRun() {
+        scroll.post { scroll.smoothScrollTo(0, (runSection.top - dp(8)).coerceAtLeast(0)) }
     }
 
     private fun hint(kind: GlyphView.Kind, color: Int, txt: String): View = LinearLayout(context).apply {
@@ -320,6 +344,8 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
 
     /** Amtliche DWD-Warnungen als farbige Karten oben; null/leer blendet sie aus. */
     fun setWarnings(list: List<Warning>?) {
+        lastWarnings = list
+        rebindRun()
         warnBox.removeAllViews()
         if (list.isNullOrEmpty()) { warnBox.visibility = View.GONE; return }
         warnBox.visibility = View.VISIBLE

@@ -64,8 +64,28 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         WarnCheck.ensureChannel(this)
         WarnScheduler.ensure(this)
         applyIntentPlace(intent)
+        if (intent?.action == ACTION_RUN) { Prefs.setSelected(this, Prefs.CURRENT) }
         selectTab(0)
         showSelected(refreshLocation = true)
+        handleAction(intent)
+    }
+
+    /** App-Verknüpfungen: Lauf-Check anzeigen bzw. Fahrmodus starten. */
+    private fun handleAction(i: Intent?) {
+        when (i?.action) {
+            ACTION_RUN -> forecastPage.scrollToRun()
+            ACTION_DRIVE -> {
+                i.action = null
+                if (!Locator.hasPermission(this)) {
+                    requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOC)
+                    return
+                }
+                val ok = DriveService.running || DriveService.start(this, auto = false)
+                android.widget.Toast.makeText(this,
+                    if (ok) "Fahrmodus aktiv – Wetter auf der Strecke wird geprüft" else "Fahrmodus konnte nicht starten",
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     /** Vom Widget geöffnet: den Ort des Widgets anzeigen. */
@@ -81,12 +101,19 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        if (applyIntentPlace(intent)) {
+        if (intent?.action == ACTION_RUN && Prefs.selected(this) != Prefs.CURRENT) {
+            Prefs.setSelected(this, Prefs.CURRENT)
+            shown = null
+            search.visibility = View.GONE
+            selectTab(0)
+            showSelected(refreshLocation = true)
+        } else if (applyIntentPlace(intent)) {
             search.visibility = View.GONE
             selectTab(0)
             forecastPage.scroll.scrollTo(0, 0)
             showSelected(refreshLocation = Prefs.selected(this) == Prefs.CURRENT)
         } else if (tab != 0) selectTab(0)
+        handleAction(intent)
     }
 
     // ------------------------------------------------------------- Navigation unten
@@ -455,5 +482,8 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         private const val REQ_LOC = 7
         private const val REQ_NOTIF = 8
         const val EXTRA_PLACE = "place"
+        const val ACTION_RUN = "de.basti.wetter.RUN"
+        const val ACTION_DRIVE = "de.basti.wetter.DRIVE"
+        const val ACTION_DRIVE_VIEW = "de.basti.wetter.DRIVE_VIEW"
     }
 }

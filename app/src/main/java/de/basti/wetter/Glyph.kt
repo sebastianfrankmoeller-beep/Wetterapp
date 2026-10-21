@@ -15,7 +15,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp: Int = 22) : View(ctx) {
 
-    enum class Kind { BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
+    enum class Kind { SHIRT, MOON, SUN, RUN, CAR, SPEAKER, BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
 
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -104,6 +104,69 @@ class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp
                     path.lineTo(X(16.6f), Y(6.8f))
                     path.lineTo(X(12.4f), Y(7.6f))
                     c.drawPath(path, paint)
+                }
+                Kind.SHIRT -> {
+                    path.moveTo(X(8.5f), Y(3.5f))
+                    path.lineTo(X(2.5f), Y(7f))
+                    path.lineTo(X(4.5f), Y(11f))
+                    path.lineTo(X(6.5f), Y(10f))
+                    path.lineTo(X(6.5f), Y(20.5f))
+                    path.lineTo(X(17.5f), Y(20.5f))
+                    path.lineTo(X(17.5f), Y(10f))
+                    path.lineTo(X(19.5f), Y(11f))
+                    path.lineTo(X(21.5f), Y(7f))
+                    path.lineTo(X(15.5f), Y(3.5f))
+                    path.cubicTo(X(14.5f), Y(6f), X(9.5f), Y(6f), X(8.5f), Y(3.5f))
+                    path.close()
+                    c.drawPath(path, paint)
+                }
+                Kind.MOON -> {
+                    path.addCircle(cx, cy, 8.5f * u, Path.Direction.CW)
+                    val cut = Path().apply { addCircle(cx + 5f * u, cy - 4f * u, 7.5f * u, Path.Direction.CW) }
+                    path.op(cut, Path.Op.DIFFERENCE)
+                    paint.style = Paint.Style.FILL
+                    c.drawPath(path, paint)
+                }
+                Kind.SUN -> {
+                    c.drawCircle(cx, cy, 4.5f * u, paint)
+                    for (i in 0 until 8) {
+                        val a = Math.toRadians(i * 45.0)
+                        c.drawLine(
+                            cx + (cos(a) * 7.5f * u).toFloat(), cy + (sin(a) * 7.5f * u).toFloat(),
+                            cx + (cos(a) * 10f * u).toFloat(), cy + (sin(a) * 10f * u).toFloat(), paint
+                        )
+                    }
+                }
+                Kind.RUN -> {
+                    // Laufende Figur
+                    paint.style = Paint.Style.FILL
+                    c.drawCircle(X(14.5f), Y(4f), 2.2f * u, paint)
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = 2.2f * u
+                    path.moveTo(X(7f), Y(10.5f)); path.lineTo(X(10.5f), Y(8f)); path.lineTo(X(14f), Y(8.5f)); path.lineTo(X(16.5f), Y(11.5f)); path.lineTo(X(19.5f), Y(12f))
+                    c.drawPath(path, paint)
+                    path.reset()
+                    path.moveTo(X(13f), Y(8.5f)); path.lineTo(X(11f), Y(14f)); path.lineTo(X(15f), Y(17f)); path.lineTo(X(14f), Y(21.5f))
+                    c.drawPath(path, paint)
+                    path.reset()
+                    path.moveTo(X(11f), Y(14f)); path.lineTo(X(9f), Y(18f)); path.lineTo(X(4.5f), Y(18.5f))
+                    c.drawPath(path, paint)
+                }
+                Kind.CAR -> {
+                    path.moveTo(X(3f), Y(17f)); path.lineTo(X(3f), Y(12f)); path.lineTo(X(6f), Y(6.5f)); path.lineTo(X(18f), Y(6.5f))
+                    path.lineTo(X(21f), Y(12f)); path.lineTo(X(21f), Y(17f)); path.close()
+                    c.drawPath(path, paint)
+                    c.drawLine(X(3f), Y(12f), X(21f), Y(12f), paint)
+                    paint.style = Paint.Style.FILL
+                    c.drawCircle(X(7f), Y(18.5f), 2f * u, paint)
+                    c.drawCircle(X(17f), Y(18.5f), 2f * u, paint)
+                }
+                Kind.SPEAKER -> {
+                    path.moveTo(X(3f), Y(9f)); path.lineTo(X(7f), Y(9f)); path.lineTo(X(12f), Y(4.5f)); path.lineTo(X(12f), Y(19.5f))
+                    path.lineTo(X(7f), Y(15f)); path.lineTo(X(3f), Y(15f)); path.close()
+                    c.drawPath(path, paint)
+                    c.drawArc(RectF(X(11f), Y(8f), X(18f), Y(16f)), -50f, 100f, false, paint)
+                    c.drawArc(RectF(X(11f), Y(4.5f), X(21.5f), Y(19.5f)), -50f, 100f, false, paint)
                 }
                 Kind.BOLT -> {
                     path.moveTo(X(13.5f), Y(2f))

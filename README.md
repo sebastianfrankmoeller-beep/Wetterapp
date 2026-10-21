@@ -24,9 +24,35 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   abspielbar, mit Zeitleiste; zuschaltbare **Warnkarte**
 - **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
   Karte antippen zeigt Wind, Richtung, Böen (und Gewitterrisiko) an dieser Stelle
+- **Lauf-Check** (siehe unten)
+- **Fahrmodus** mit Google Maps (siehe unten)
 - **Unwetter-Benachrichtigungen** (auch auf der Garmin-Uhr, siehe unten)
 - **Widget** (siehe unten)
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Warnungen, Berechtigungen
+
+## Lauf-Check
+
+Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer für die **nächsten 2 Stunden**:
+
+- **Ampel** mit Urteil und Hauptgrund (z. B. „Leichter Regen ab ca. 12:30“)
+- **Verlauf in 15-Minuten-Schritten**: Ampelfarbe, Regen-Tropfen, gefühlte Temperatur, Wind – antippen für Details
+- **Kleidung** nach gefühlter Temperatur und **Läufertyp** (Läuft warm / Normal / Friert schnell –
+  in den Einstellungen oder per Pille in der Karte)
+- **Hinweise**: Gegenwind-Tipp, Gewitter, Glätte, Dunkelheit, Hitze, UV, Warnungen
+- **Besseres Zeitfenster**, wenn die nächsten 2 Stunden ungünstig sind
+- Auch als Widget-Inhalt **„Lauf“**
+
+## Fahrmodus
+
+- Startet **automatisch**, sobald Google Maps navigiert (Einstellungen → Fahrmodus → Benachrichtigungszugriff erlauben),
+  und endet mit der Navigation. Manuell: App-Symbol lange drücken → *Fahrmodus*
+- Prüft das Wetter **60 km voraus** in Fahrtrichtung, jeweils zur voraussichtlichen Ankunftszeit:
+  Starkregen, Nebel, Schnee, Glätte/Glatteis, Sturmböen, Gewitter und amtliche DWD-Warnungen
+- **Sprachansagen** („In 12 Kilometern Starkregen, etwa 8 Kilometer lang.“), Google Maps wird dabei leiser;
+  dazu eine laufende Benachrichtigung mit dem aktuellen Stand
+- **Routengenau**: In Google Maps Ziel antippen → *Teilen* → *Wetter-Fahrmodus*. Dann wird die Strecke bis zum Ziel
+  geprüft (Route über OSRM), inkl. Wetter am Ziel. Beim Abweichen von der Route wird neu berechnet.
+- Hinweis: Google Maps gibt seine Route nicht an andere Apps weiter – ohne Teilen gilt der Korridor in Fahrtrichtung.
 
 ## Unwetter-Benachrichtigungen
 
@@ -92,6 +118,8 @@ Versionsnummer steigt mit jedem Lauf – eine neue APK lässt sich einfach über
 | `RadarPage.kt` | DWD-Radar mit Zeitleiste, Warnkarte |
 | `Warnings.kt`, `WarnService.kt` | DWD-Warnungen, Hintergrundprüfung, Benachrichtigungen |
 | `SettingsActivity.kt` | Einstellungen |
+| `RunCheck.kt`, `RunViews.kt` | Lauf-Check |
+| `Drive.kt`, `DriveService.kt`, `MapsNavListener.kt`, `ShareRouteActivity.kt` | Fahrmodus |
 | `WindPage.kt` | Windkarte (Wind, Böen, Gewitter) mit Partikel-Animation |
 | `SearchPanel.kt` | Ortssuche |
 | `Locator.kt` | Standort und Ortsname |

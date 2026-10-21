@@ -12,6 +12,8 @@ import android.text.TextPaint
 import android.text.TextUtils
 import de.basti.wetter.Fmt
 import de.basti.wetter.Forecast
+import de.basti.wetter.RunCheck
+import de.basti.wetter.GlyphView
 import de.basti.wetter.Prefs
 import de.basti.wetter.Ui
 import de.basti.wetter.WeatherIcons
@@ -29,8 +31,9 @@ object WidgetRenderer {
     const val MODE_HOURS = 2
     const val MODE_DAYS = 3
     const val MODE_ALL = 4
+    const val MODE_RUN = 5
 
-    val MODE_NAMES = arrayOf("Automatisch", "Jetzt", "Stunden", "Tage", "Alles")
+    val MODE_NAMES = arrayOf("Automatisch", "Jetzt", "Stunden", "Tage", "Alles", "Lauf")
 
     fun palette(ctx: Context, theme: Int): Ui.Palette {
         val night = (ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -95,6 +98,10 @@ object WidgetRenderer {
         } else mode
 
         val pad = 14 * d
+        if (effMode == MODE_RUN) {
+            drawRun(ctx, c, f, placeName, pad, pad, w - 2 * pad, h - 2 * pad, d, p, text)
+            return bmp
+        }
         var y = pad
         // Kopfbereich: kompakt, wenn danach noch Stunden/Tage folgen
         val headH = if (effMode == MODE_NOW) h - 2 * pad else min(68 * d, h * 0.45f)
@@ -116,6 +123,70 @@ object WidgetRenderer {
             }
         }
         return bmp
+    }
+
+    /** Widget-Inhalt "Lauf": Ampel, Grund, Kleidung, 2-Stunden-Verlauf. */
+    private fun drawRun(ctx: Context, c: Canvas, f: Forecast, name: String, x: Float, y: Float, w: Float, h: Float, d: Float, p: Ui.Palette, text: TextPaint) {
+        val r = RunCheck.evaluate(f, Prefs.runnerType(ctx), null) ?: return
+        val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val col = RunCheck.color(r.level, p)
+
+        // Kopf: Ampelpunkt + Urteil, rechts Ort und Temperatur
+        paint.color = col
+        c.drawCircle(x + 7 * d, y + 11 * d, 7 * d, paint)
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = medium
+        text.textSize = 16 * d
+        text.color = if (r.level == RunCheck.GREEN) p.text else col
+        c.drawText(r.headline, x + 22 * d, y + 17 * d, text)
+        val headW = text.measureText(r.headline)
+        text.typeface = Typeface.DEFAULT
+        text.textSize = 12 * d
+        text.color = p.muted
+        text.textAlign = Paint.Align.RIGHT
+        val right = "${name} · ${Fmt.temp(f.now?.temp ?: Double.NaN)}"
+        val avail = w - headW - 34 * d
+        if (avail > 40 * d) c.drawText(TextUtils.ellipsize(right, text, avail, TextUtils.TruncateAt.END).toString(), x + w, y + 16 * d, text)
+        text.textAlign = Paint.Align.LEFT
+
+        var yy = y + 38 * d
+        text.textSize = 12.5f * d
+        text.color = p.muted
+        if (yy < y + h) c.drawText(TextUtils.ellipsize(r.reason, text, w, TextUtils.TruncateAt.END).toString(), x, yy, text)
+
+        // Kleidung
+        yy += 22 * d
+        if (yy < y + h - 20 * d) {
+            GlyphView.draw(c, GlyphView.Kind.SHIRT, x + 8 * d, yy - 4 * d, 16 * d, p.accent, paint, android.graphics.Path())
+            text.typeface = medium
+            text.textSize = 13 * d
+            text.color = p.text
+            c.drawText(TextUtils.ellipsize(r.clothing, text, w - 24 * d, TextUtils.TruncateAt.END).toString(), x + 24 * d, yy, text)
+            text.typeface = Typeface.DEFAULT
+        }
+
+        // 2-Stunden-Verlauf als Ampelbalken mit Zeit
+        val barY = y + h - 24 * d
+        if (barY > yy + 8 * d) {
+            val n = r.slots.size
+            val cw = w / n
+            paint.style = Paint.Style.FILL
+            for ((i, sl) in r.slots.withIndex()) {
+                paint.color = RunCheck.color(sl.level, p)
+                val l = x + i * cw + if (i == 0) 0f else 1.5f * d
+                val rr = x + (i + 1) * cw - if (i == n - 1) 0f else 1.5f * d
+                c.drawRoundRect(RectF(l, barY, rr, barY + 7 * d), 3.5f * d, 3.5f * d, paint)
+            }
+            text.textSize = 10.5f * d
+            text.color = p.muted
+            val t0 = r.slots.first().t
+            for ((k, i) in listOf(0, n / 2, n).withIndex()) {
+                text.textAlign = when (k) { 0 -> Paint.Align.LEFT; 2 -> Paint.Align.RIGHT; else -> Paint.Align.CENTER }
+                c.drawText(if (i == 0) "jetzt" else f.hhmm(t0 + i * 900L), x + i * cw, barY + 21 * d, text)
+            }
+            text.textAlign = Paint.Align.LEFT
+        }
     }
 
     private fun drawNow(

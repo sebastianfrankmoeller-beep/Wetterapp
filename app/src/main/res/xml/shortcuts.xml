@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Verknüpfungen: App-Symbol lange drücken -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="run"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_run"
+        android:shortcutShortLabel="@string/shortcut_run"
+        android:shortcutLongLabel="@string/shortcut_run">
+        <intent
+            android:action="de.basti.wetter.RUN"
+            android:targetPackage="de.basti.wetter"
+            android:targetClass="de.basti.wetter.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="drive"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_drive"
+        android:shortcutShortLabel="@string/shortcut_drive"
+        android:shortcutLongLabel="@string/shortcut_drive_long">
+        <intent
+            android:action="de.basti.wetter.DRIVE"
+            android:targetPackage="de.basti.wetter"
+            android:targetClass="de.basti.wetter.MainActivity" />
+    </shortcut>
+</shortcuts>

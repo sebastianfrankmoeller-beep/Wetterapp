@@ -102,6 +102,16 @@ object Prefs {
         sp(ctx).edit().putString("cache_$placeId", json).apply()
     }
 
+    // ------------------------------------------------------------------ Lauf-Check
+    fun runnerType(ctx: Context) = sp(ctx).getInt("runner_type", RunCheck.TYPE_WARM)
+    fun setRunnerType(ctx: Context, v: Int) = sp(ctx).edit().putInt("runner_type", v).apply()
+
+    // ------------------------------------------------------------------- Fahrmodus
+    fun driveAuto(ctx: Context) = sp(ctx).getBoolean("drive_auto", true)
+    fun setDriveAuto(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("drive_auto", v).apply()
+    fun driveVoice(ctx: Context) = sp(ctx).getBoolean("drive_voice", true)
+    fun setDriveVoice(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("drive_voice", v).apply()
+
     // -------------------------------------------------------------- Unwetterwarnungen
     fun warnEnabled(ctx: Context) = sp(ctx).getBoolean("warn_on", true)
     fun setWarnEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("warn_on", v).apply()

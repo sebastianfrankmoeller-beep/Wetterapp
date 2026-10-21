@@ -97,7 +97,8 @@ class Forecast(
     val nowcast: List<Pair<Long, Double>>, // 15-Minuten-Niederschlag (mm) der nächsten Stunden, nur ICON-D2-Gebiet
     val fetchedAt: Long,      // Millisekunden
     val hasD2: Boolean,
-    val nowcastSnow: Boolean = false  // Niederschlag in den nächsten Stunden überwiegend als Schnee
+    val nowcastSnow: Boolean = false,  // Niederschlag in den nächsten Stunden überwiegend als Schnee
+    val uv: Map<Long, Double> = emptyMap()  // UV-Index je Stunde (nächste 24 h)
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -203,15 +204,21 @@ object WeatherApi {
             "&minutely_15=precipitation,snowfall&forecast_minutely_15=13" +
             "&forecast_hours=48&past_hours=1&timeformat=unixtime&timezone=auto"
 
-        // Beide Abfragen parallel.
+        // UV-Index (Standardmodell, nur für die nächsten Stunden – optional)
+        val uvUrl = "$BASE?${loc(p)}&hourly=uv_index&forecast_hours=24&past_hours=1&timeformat=unixtime&timezone=auto"
+
+        // Alle Abfragen parallel.
         var d2: String? = null
+        var uv: String? = null
         val t = Thread { d2 = runCatching { Net.get(d2Url) }.getOrNull() }
-        t.start()
+        val tu = Thread { uv = runCatching { Net.get(uvUrl, 8000) }.getOrNull() }
+        t.start(); tu.start()
         val ec = Net.get(ecUrl)
-        t.join(20000)
+        t.join(20000); tu.join(10000)
         return JSONObject()
             .put("ec", JSONObject(ec))
             .put("d2", d2?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
+            .put("uv", uv?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("at", System.currentTimeMillis())
             .toString()
     }
@@ -339,7 +346,13 @@ object WeatherApi {
         }
 
         val days = buildDays(hours, offset, sun)
-        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy)
+
+        val uv = HashMap<Long, Double>()
+        root.optJSONObject("uv")?.optJSONObject("hourly")?.let { u ->
+            val tt = u.optJSONArray("time"); val vv = u.optJSONArray("uv_index")
+            if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
+        }
+        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {

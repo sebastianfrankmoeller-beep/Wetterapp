@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="widget_description">Wetter für Standort oder Favorit – Inhalt, Ort und Transparenz frei wählbar</string>
+    <string name="shortcut_run">Lauf-Check</string>
+    <string name="shortcut_drive">Fahrmodus</string>
+    <string name="shortcut_drive_long">Fahrmodus starten</string>
 </resources>

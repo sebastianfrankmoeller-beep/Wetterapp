@@ -123,6 +123,52 @@ class SettingsActivity : Activity() {
             recreate()
         }), 24)
 
+        // ------------------------------------------------------------ Lauf-Check
+        add(section("Lauf-Check"), 8)
+        add(card(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(14), 0, dp(4))
+            addView(Ui.tv(this@SettingsActivity, "Läufertyp für die Kleidungsempfehlung", 16f, p.text, true))
+            addView(pillRow(listOf("Läuft warm" to RunCheck.TYPE_WARM, "Normal" to RunCheck.TYPE_NORMAL, "Friert schnell" to RunCheck.TYPE_COLD),
+                Prefs.runnerType(this@SettingsActivity)) { v -> Prefs.setRunnerType(this@SettingsActivity, v); build() })
+            addView(Ui.tv(this@SettingsActivity, when (Prefs.runnerType(this@SettingsActivity)) {
+                RunCheck.TYPE_WARM -> "Schwitzt schnell, wird beim Laufen schnell warm – leichteste Empfehlung."
+                RunCheck.TYPE_NORMAL -> "Übliche Läuferfaustregel."
+                else -> "Friert leicht – eine Schicht mehr als üblich."
+            }, 13f, p.muted), LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(10) })
+        }), 24)
+
+        // ------------------------------------------------------------- Fahrmodus
+        add(section("Fahrmodus"), 8)
+        val drive = ArrayList<View>()
+        val access = MapsNavListener.hasAccess(this)
+        drive.add(toggleRow("Automatisch mit Google Maps", "Startet, sobald Google Maps navigiert, und endet mit der Navigation", Prefs.driveAuto(this)) {
+            Prefs.setDriveAuto(this, it)
+            build()
+        })
+        if (Prefs.driveAuto(this)) {
+            drive.add(statusRow("Benachrichtigungszugriff",
+                if (access) "Erlaubt – Navigation wird erkannt" else "Nötig, um die Google-Maps-Navigation zu erkennen", access) {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            })
+        }
+        drive.add(toggleRow("Sprachansagen", "z. B. „In 12 Kilometern Starkregen“ – Google Maps wird kurz leiser", Prefs.driveVoice(this)) {
+            Prefs.setDriveVoice(this, it)
+        })
+        drive.add(actionRow(if (DriveService.running) "Fahrmodus läuft" else "Fahrmodus manuell starten",
+            if (DriveService.running) "Prüft das Wetter auf der Strecke voraus" else "Ohne Google-Maps-Navigation",
+            if (DriveService.running) "Beenden" else "Starten") {
+            if (DriveService.running) DriveService.stop(this)
+            else if (!Locator.hasPermission(this)) requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
+            else DriveService.start(this, auto = false)
+            root.postDelayed({ build() }, 600)
+        })
+        add(card(*drive.toTypedArray()), 10)
+        add(note("Routengenau: In Google Maps das Ziel antippen → Teilen → „Wetter-Fahrmodus“. " +
+            "Dann prüft die App die ganze Strecke bis zum Ziel." +
+            if (!access && Prefs.driveAuto(this)) "\nIst der Schalter beim Benachrichtigungszugriff ausgegraut: Einstellungen → Apps → Wetter → ⋮ → " +
+                "„Eingeschränkte Einstellungen zulassen“." else ""), 24)
+
         // ------------------------------------------------------ Unwetterwarnungen
         add(section("Unwetterwarnungen"), 8)
         val on = Prefs.warnEnabled(this)
