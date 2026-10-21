@@ -31,6 +31,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     private var tab = 0
     private var themeAtStart = 0
+    private var firstResume = true
     private var shown: Forecast? = null
     private var loadSeq = 0
     private val io = Executors.newFixedThreadPool(2)
@@ -226,12 +227,22 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOC)
             return
         }
+        if (!Locator.locationEnabled(this) && Prefs.lastLocation(this) == null) {
+            forecastPage.showStatus("Die Ortung (GPS) ist am Handy ausgeschaltet.", listOf(
+                "Ortung einschalten" to { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) },
+                "Ort suchen" to { onSearch() }
+            ))
+            return
+        }
         if (shown == null) forecastPage.showStatus("Standort wird bestimmt …")
         Locator.current(this) { loc ->
             if (loc == null) {
                 val last = Prefs.lastLocation(this)
                 if (last != null) load(last, Prefs.CURRENT, false)
-                else forecastPage.showStatus("Kein Standort verfügbar – ist die Ortung eingeschaltet? Alternativ oben einen Ort suchen.")
+                else forecastPage.showStatus("Kein Standort gefunden. Am besten kurz im Freien oder mit WLAN erneut versuchen.", listOf(
+                    "Erneut versuchen" to { locateAndLoad() },
+                    "Ort suchen" to { onSearch() }
+                ))
                 return@current
             }
             val prev = Prefs.lastLocation(this)
@@ -289,7 +300,8 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                 }.onFailure { e ->
                     forecastPage.showStatus(
                         if (shown != null) "Keine Verbindung – zeige gespeicherte Daten"
-                        else "Vorhersage konnte nicht geladen werden (${e.message ?: "Netzwerk"})"
+                        else "Vorhersage konnte nicht geladen werden (${e.message ?: "Netzwerk"})",
+                        listOf("Erneut versuchen" to { load(place, sel, true) })
                     )
                 }
             }
@@ -448,6 +460,9 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     override fun onResume() {
         super.onResume()
         if (Prefs.theme(this) != themeAtStart) { recreate(); return }
+        // Noch nichts angezeigt (z. B. Standort erst in den Einstellungen erlaubt/eingeschaltet) → erneut versuchen
+        if (shown == null && Prefs.selected(this) == Prefs.CURRENT && Locator.hasPermission(this) && !firstResume) locateAndLoad()
+        firstResume = false
         if (tab == 1) radarPage?.onResume()
         if (tab == 2) windPage?.onResume()
         // Nach längerer Pause automatisch aktualisieren

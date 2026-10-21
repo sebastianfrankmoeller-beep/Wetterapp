@@ -62,6 +62,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val desc = Ui.tv(ctx, "", 18f, p.text, true)
     private val feels = Ui.tv(ctx, "", 14f, p.muted)
     private val hints = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+    private val statusActions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
     private val warnBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
     private val stats = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
@@ -118,6 +119,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         }, 16)
 
         add(status.apply { visibility = View.GONE }, 8)
+        add(statusActions.apply { visibility = View.GONE }, 12)
         add(warnBox.apply { visibility = View.GONE }, 0)
 
         // ----------------------------------------------------------- Aktuell
@@ -244,9 +246,22 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         (star.parent as View).visibility = if (canFavorite) View.VISIBLE else View.GONE
     }
 
-    fun showStatus(msg: String?) {
+    fun showStatus(msg: String?) = showStatus(msg, emptyList())
+
+    /** Hinweis oben mit optionalen Knöpfen (z. B. "Erneut versuchen", "Ort suchen"). */
+    fun showStatus(msg: String?, actions: List<Pair<String, () -> Unit>>) {
         status.text = msg ?: ""
         status.visibility = if (msg.isNullOrEmpty()) View.GONE else View.VISIBLE
+        statusActions.removeAllViews()
+        for ((i, a) in actions.withIndex()) {
+            statusActions.addView(Ui.tv(context, a.first, 14f, if (i == 0) p.onAccent else p.text, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                background = Ui.pressable(p, if (i == 0) p.accent else p.surfaceHi, dpf(20))
+                setOnClickListener { a.second() }
+            }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { if (i > 0) leftMargin = dp(8) })
+        }
+        statusActions.visibility = if (actions.isEmpty() || msg.isNullOrEmpty()) View.GONE else View.VISIBLE
     }
 
     // ------------------------------------------------------------- Inhalt

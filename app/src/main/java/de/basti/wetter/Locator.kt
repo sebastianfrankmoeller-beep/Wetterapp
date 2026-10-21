@@ -34,10 +34,19 @@ object Locator {
         return best
     }
 
+    /** Ist die Ortung am Handy überhaupt eingeschaltet? */
+    fun locationEnabled(ctx: Context): Boolean {
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return if (Build.VERSION.SDK_INT >= 28) lm.isLocationEnabled
+        else lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    }
+
     /**
-     * Holt eine frische Position (max. ~12 s), sonst die letzte bekannte.
+     * Holt eine frische Position: fragt alle verfügbaren Quellen gleichzeitig (Fused, Netz, GPS)
+     * und nimmt die erste Antwort. Nach spätestens 20 s gilt die letzte bekannte Position.
      * Ruft [done] im Hauptthread auf; null, wenn gar keine Position verfügbar ist.
      */
+    @Suppress("DEPRECATION")
     fun current(ctx: Context, done: (Location?) -> Unit) {
         val main = Handler(Looper.getMainLooper())
         if (!hasPermission(ctx)) { done(null); return }
@@ -47,47 +56,40 @@ object Locator {
         if (last != null && System.currentTimeMillis() - last.time < 10 * 60_000) { done(last); return }
 
         val providers = buildList {
-            if (Build.VERSION.SDK_INT >= 31 && runCatching { lm.isProviderEnabled("fused") }.getOrDefault(false)) add("fused")
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) add(LocationManager.NETWORK_PROVIDER)
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) add(LocationManager.GPS_PROVIDER)
+            for (pr in listOf("fused", LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
+                if (runCatching { lm.allProviders.contains(pr) && lm.isProviderEnabled(pr) }.getOrDefault(false)) add(pr)
+            }
         }
-        if (providers.isEmpty() || Build.VERSION.SDK_INT < 30) {
-            if (providers.isNotEmpty()) {
-                @Suppress("DEPRECATION")
-                try {
-                    var finished = false
-                    val listener = object : android.location.LocationListener {
-                        override fun onLocationChanged(l: Location) {
-                            if (finished) return
-                            finished = true
-                            lm.removeUpdates(this)
-                            done(l)
-                        }
-                        @Deprecated("") override fun onStatusChanged(p: String?, s: Int, e: android.os.Bundle?) {}
-                        override fun onProviderEnabled(p: String) {}
-                        override fun onProviderDisabled(p: String) {}
-                    }
-                    lm.requestSingleUpdate(providers.first(), listener, Looper.getMainLooper())
-                    main.postDelayed({
-                        if (!finished) { finished = true; lm.removeUpdates(listener); done(last) }
-                    }, 12000)
-                } catch (e: SecurityException) { done(last) }
-            } else done(last)
-            return
-        }
+        if (providers.isEmpty()) { done(last); return }
 
         var finished = false
-        val signal = CancellationSignal()
+        val signals = ArrayList<CancellationSignal>()
+        lateinit var listener: android.location.LocationListener
         fun finish(l: Location?) {
             if (finished) return
             finished = true
-            signal.cancel()
+            signals.forEach { it.cancel() }
+            runCatching { lm.removeUpdates(listener) }
             done(l ?: last)
         }
+        listener = object : android.location.LocationListener {
+            override fun onLocationChanged(l: Location) = finish(l)
+            @Deprecated("") override fun onStatusChanged(p: String?, s: Int, e: android.os.Bundle?) {}
+            override fun onProviderEnabled(p: String) {}
+            override fun onProviderDisabled(p: String) {}
+        }
         try {
-            lm.getCurrentLocation(providers.first(), signal, ctx.mainExecutor) { l -> finish(l) }
+            for (pr in providers) {
+                // Laufende Updates: liefern auch dann, wenn eine Einzelabfrage leer zurückkommt
+                lm.requestLocationUpdates(pr, 0L, 0f, listener, Looper.getMainLooper())
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val sig = CancellationSignal()
+                    signals.add(sig)
+                    lm.getCurrentLocation(pr, sig, ctx.mainExecutor) { l -> if (l != null) finish(l) }
+                }
+            }
         } catch (e: SecurityException) { finish(null); return }
-        main.postDelayed({ finish(null) }, 12000)
+        main.postDelayed({ finish(null) }, 20000)
     }
 
     /** Ortsname zu Koordinaten (Hintergrund), Ergebnis im Hauptthread. */
