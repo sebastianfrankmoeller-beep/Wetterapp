@@ -11,7 +11,8 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   Langes Drücken auf einen Favoriten: verschieben oder entfernen.
   Erneutes Antippen des gewählten Ortes lädt neu.
 - **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck
-- **Regen der nächsten 3 Stunden** (DWD ICON-D2): „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
+- **Regen der nächsten 3 Stunden**: die ersten 2 Stunden aus dem **DWD-Radar** (Messung + Radar-Nowcast, 1 km,
+  über Bright Sky), danach DWD ICON-D2. „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
   antippen oder ziehen zeigt Uhrzeit und Menge
 - **Stündlich** bis 15 Tage: Symbol, Temperaturkurve, Niederschlag (mm), Regenwahrscheinlichkeit, Wind.
   Eine grüne Linie markiert, wo von ICON-D2 auf ECMWF umgeschaltet wird.
@@ -21,7 +22,9 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Schnee**: Neuschnee, Schneehöhe (ersetzt bei liegendem Schnee die Luftdruck-Kachel), Schneefallgrenze
 - **Amtliche DWD-Warnungen** als farbige Karten oben in der Vorhersage, antippen für den vollen Text
 - **Regenradar** des Deutschen Wetterdienstes: letzte 90 Minuten gemessen + 2 Stunden DWD-Vorhersage,
-  abspielbar, mit Zeitleiste; zuschaltbare **Warnkarte**
+  abspielbar, mit Zeitleiste. **Weltweit**: außerhalb des DWD-Gebiets automatisch Radar von Rain Viewer
+  (nur Messungen, gröber). Ortsnamen liegen über dem Radar. Zuschaltbare **Warnkarte** mit Legende –
+  Karte antippen zeigt die Warnungen an dieser Stelle
 - **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
   Karte antippen zeigt Wind, Richtung, Böen (und Gewitterrisiko) an dieser Stelle
 - **Lauf-Check** (siehe unten)
@@ -76,7 +79,8 @@ Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer
 | 0–48 h | DWD **ICON-D2** | 2 km, Deutschland und Nachbarländer |
 | danach bis 15 Tage (und außerhalb des D2-Gebiets) | **ECMWF IFS HRES** | 9 km |
 | Regenwahrscheinlichkeit | ECMWF-Ensemble | – |
-| Radar | DWD Radarverbund + Nowcast | 1 km, 5 min |
+| Radar | DWD Radarverbund + Nowcast; weltweit Rain Viewer | 1 km, 5 min |
+| Regen nächste 2 Std. | DWD-Radar (RADOLAN RV) via Bright Sky | 1 km, 5 min |
 | Windkarte, Böen, Gewitter-Potenzial | DWD ICON (D2/EU/global, nahtlos) | – |
 | Gewitterrisiko Vorhersage | ICON-D2 Blitz-Potenzial, danach ECMWF Blitzdichte/CAPE | – |
 | Warnungen | DWD (amtlich) | Gemeinde |
@@ -129,5 +133,5 @@ Versionsnummer steigt mit jedem Lauf – eine neue APK lässt sich einfach über
 | `widget/` | Widget, Einstellungen, Zeichnen |
 | `Ui.kt`, `Glyph.kt`, `MapSupport.kt` | Farben, Symbole, Kartengrundlage |
 
-Datenquellen: Open-Meteo (CC BY 4.0), Deutscher Wetterdienst, ECMWF.
-Karten: © OpenStreetMap-Mitwirkende.
+Datenquellen: Open-Meteo (CC BY 4.0), Deutscher Wetterdienst, ECMWF, Bright Sky, Weather data by Rain Viewer.
+Karten: © OpenStreetMap-Mitwirkende, © CARTO.

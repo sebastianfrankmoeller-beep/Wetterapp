@@ -481,7 +481,10 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private val marker = PlaceMarker(p, d)
     private val timeline = TimelineView(ctx, p)
     private val timeLabel = Ui.tv(ctx, "", 17f, p.text, true)
-    private val subLabel = Ui.tv(ctx, "", 12.5f, p.muted)
+    private val subLabel = Ui.tv(ctx, "", 12.5f, p.muted).apply {
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+    }
     private val legend = WindLegend(ctx, p)
     private val layerButtons = ArrayList<TextView>()
     private val main = Handler(Looper.getMainLooper())
@@ -494,6 +497,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
         setBackgroundColor(p.bg)
         map.overlays.add(overlay)
         map.overlays.add(marker)
+        MapSupport.addLabels(map, p, bright = true)   // Ortsnamen über Farbfläche und Standortpunkt
         marker.point = center
         map.setMaxZoomLevel(10.0)
         addView(map, LayoutParams(MATCH, MATCH))
@@ -547,7 +551,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             setOnClickListener { marker.point?.let { map.controller.animateTo(it, 7.0, 500L) } }
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
-        addView(Ui.tv(ctx, "Daten: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Daten: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
         }, LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(18), dp(4)) })
 
@@ -571,6 +575,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
 
     private fun changed() {
         overlay.moved()
+        if (overlay.layer == WindOverlay.Layer.THUNDER) updateSub()
         main.removeCallbacks(refetch)
         main.postDelayed(refetch, 1500)
     }
@@ -708,10 +713,30 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private fun updateSub() {
         if (fetching) return
         subLabel.text = when (overlay.layer) {
-            WindOverlay.Layer.WIND -> "Mittelwind 10 m  ·  Karte antippen für Werte"
-            WindOverlay.Layer.GUST -> "Böen  ·  Karte antippen für Werte"
-            WindOverlay.Layer.THUNDER -> "Gewitter-Potenzial (Blitz-Index)"
+            WindOverlay.Layer.WIND -> "Mittelwind  ·  antippen für Werte"
+            WindOverlay.Layer.GUST -> "Böen  ·  antippen für Werte"
+            WindOverlay.Layer.THUNDER ->
+                if (thunderInView() < 1) "Kein Gewitterpotenzial im Ausschnitt" else "Gewitter-Potenzial  ·  antippen für Werte"
         }
+    }
+
+    /** Höchste Gewitterstufe (0–3) im sichtbaren Kartenausschnitt zur gewählten Stunde. */
+    private fun thunderInView(): Int {
+        val g = overlay.grid ?: return 0
+        val h = overlay.hour.coerceIn(0, g.times.size - 1)
+        val bb = map.boundingBox
+        var best = 0f
+        for (j in 0 until g.ny) {
+            val lat = g.north - (g.north - g.south) * j / (g.ny - 1).coerceAtLeast(1)
+            if (lat > bb.latNorth || lat < bb.latSouth) continue
+            for (i in 0 until g.nx) {
+                val lon = g.west + (g.east - g.west) * i / (g.nx - 1).coerceAtLeast(1)
+                if (lon < bb.lonWest || lon > bb.lonEast) continue
+                val v = g.thunder[h][j * g.nx + i]
+                if (!v.isNaN() && v > best) best = v
+            }
+        }
+        return ThunderColors.level(best)
     }
 
     fun onResume() {

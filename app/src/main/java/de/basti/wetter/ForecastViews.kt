@@ -58,7 +58,7 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
     private val d = resources.displayMetrics.density
     val colW = 58 * d
-    private val h = 214 * d
+    private val h = 230 * d
 
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -79,7 +79,8 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
     private val tempBottom = 142 * d
     private val barBottom = 182 * d
     private val barMax = 26 * d
-    private val yWind = 204 * d
+    private val yProb = 197 * d
+    private val yWind = 220 * d
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val n = forecast?.hours?.size ?: 0
@@ -174,7 +175,7 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             text.color = p.text
             c.drawText(Fmt.temp(hr.temp), cx, y - 8 * d, text)
 
-            // Niederschlag: Balken (voll bei 4 mm/h) + Wert
+            // Niederschlag: Balken (voll bei 4 mm/h) + Menge in mm darüber
             if (hr.precip >= 0.05) {
                 val bh = max(3 * d, (min(hr.precip, 4.0) / 4.0 * barMax).toFloat())
                 fill.color = if (hr.snow > 0.05) p.snow else p.rain
@@ -183,13 +184,16 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
                 text.typeface = Ui.TF_MEDIUM
                 text.color = if (hr.snow > 0.05) p.snow else p.rain
                 c.drawText(Fmt.mm(hr.precip), cx, barBottom - bh - 4 * d, text)
-            } else if (!hr.prob.isNaN() && hr.prob >= 20) {
-                text.textSize = 10 * d
-                text.color = p.muted
-                c.drawText("${hr.prob.roundToInt()}%", cx, barBottom - 4 * d, text)
             }
             fill.color = p.border
             c.drawRect(cx - colW / 2, barBottom, cx + colW / 2, barBottom + 1 * d, fill)
+            // Wahrscheinlichkeit immer in eigener Zeile unter der Linie
+            if (!hr.prob.isNaN() && hr.prob >= 10) {
+                text.textSize = 10 * d
+                text.typeface = Ui.TF_REGULAR
+                text.color = p.muted
+                c.drawText("${hr.prob.roundToInt()} %", cx, yProb, text)
+            }
 
             // Wind
             val strong = !hr.gust.isNaN() && hr.gust >= 50
@@ -216,6 +220,7 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
     private val d = resources.displayMetrics.density
     private val rowH = 58 * d
+    private val topPad = 20 * d      // Zeile für die Modellangabe über dem ersten Tag
     private val text = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bar = RectF()
@@ -223,8 +228,9 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
     private val gestures = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            val i = (e.y / rowH).toInt()
+            val i = ((e.y - topPad) / rowH).toInt()
             val n = forecast?.days?.size ?: 0
+            if (e.y < topPad) return true
             if (i in 0 until n) {
                 playSoundEffect(android.view.SoundEffectConstants.CLICK)
                 onDayClick?.invoke(i)
@@ -238,7 +244,23 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val n = forecast?.days?.size ?: 0
-        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (n * rowH).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (topPad + n * rowH).toInt())
+    }
+
+    /** Kleine Beschriftung (z. B. Modellwechsel) auf einer Trennlinie bzw. ganz oben. */
+    private fun tag(c: Canvas, label: String, y: Float, color: Int) {
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = Ui.TF_MEDIUM
+        text.textSize = 10.5f * d
+        val tw = text.measureText(label)
+        val r = RectF(14 * d, y - 8 * d, 14 * d + tw + 14 * d, y + 8 * d)
+        fill.shader = null
+        fill.color = p.surface
+        c.drawRoundRect(r, 8 * d, 8 * d, fill)
+        fill.color = Ui.withAlpha(color, 40)
+        c.drawRoundRect(r, 8 * d, 8 * d, fill)
+        text.color = color
+        c.drawText(label, r.left + 7 * d, y + 3.7f * d, text)
     }
 
     override fun onDraw(c: Canvas) {
@@ -257,9 +279,15 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         val barR = w - 52 * d
         val xMax = w - 10 * d
 
+        c.save()
+        c.translate(0f, topPad)
+        val tags = ArrayList<Triple<String, Float, Int>>()
+        tags.add(Triple(if (days[0].fromD2) "ICON-D2 · 2 km" else "ECMWF · 9 km", -topPad / 2, p.muted))
         for ((i, day) in days.withIndex()) {
             val top = i * rowH
             val cy = top + rowH / 2
+            if (i > 0 && days[i - 1].fromD2 && !day.fromD2) tags.add(Triple("ab hier ECMWF · 9 km", top, p.accent))
+            if (i == 10) tags.add(Triple("ab hier unsicher", top, p.warn))
             if (i == selected) {
                 fill.color = p.surfaceHi
                 c.drawRoundRect(RectF(4 * d, top + 3 * d, w - 4 * d, top + rowH - 3 * d), 14 * d, 14 * d, fill)
@@ -277,8 +305,7 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             text.typeface = Ui.TF_REGULAR
             text.textSize = 11.5f * d
             text.color = p.muted
-            val src = if (day.fromD2) "ICON-D2" else if (i >= 10) "ECMWF · unsicher" else "ECMWF"
-            c.drawText("${f.dateShort(day.start + 3600)}  ·  $src", 16 * d, cy + 14 * d, text)
+            c.drawText(f.dateShort(day.start + 3600), 16 * d, cy + 14 * d, text)
 
             // Symbol
             WeatherIcons.draw(c, day.code, true, xIcon, cy, 34 * d, p)
@@ -320,6 +347,8 @@ class DaysView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             c.drawRoundRect(bar, bh / 2, bh / 2, fill)
             fill.shader = null
         }
+        for ((label, y, color) in tags) tag(c, label, y, color)
+        c.restore()
     }
 }
 
@@ -345,6 +374,9 @@ class NowcastView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         set(v) { field = v; sel = -1; invalidate() }
     var forecast: Forecast? = null
     var snowy = false
+        set(v) { field = v; invalidate() }
+    /** Bis hier Radar (Messung + DWD-Nowcast), danach Modell; 0 = nur Modell. */
+    var radarUntil = 0L
         set(v) { field = v; invalidate() }
 
     private val d = resources.displayMetrics.density
@@ -444,6 +476,20 @@ class NowcastView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         stroke.color = main
         stroke.strokeWidth = 2.2f * d
         c.drawPath(path, stroke)
+
+        // Wechsel Radar → Modell
+        val sw = data.indexOfFirst { it.first >= radarUntil }
+        if (radarUntil > 0 && sw > 0) {
+            val x = xOf(sw) - (xOf(1) - xOf(0)) / 2
+            grid.color = Ui.withAlpha(p.accent, 140)
+            c.drawLine(x, top, x, base, grid)
+            text.textSize = 9.5f * d
+            text.textAlign = Paint.Align.LEFT
+            text.color = p.accent
+            c.drawText("Modell", x + 4 * d, top + 9 * d, text)
+            text.textAlign = Paint.Align.RIGHT
+            c.drawText("Radar", x - 4 * d, top + 9 * d, text)
+        }
 
         // Zeitachse alle 30 Minuten
         text.textSize = 10.5f * d

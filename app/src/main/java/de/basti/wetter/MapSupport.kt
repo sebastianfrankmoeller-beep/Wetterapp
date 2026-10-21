@@ -10,8 +10,11 @@ import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import java.io.File
@@ -60,10 +63,37 @@ object MapSupport {
         return ColorMatrixColorFilter(cm)
     }
 
+    /**
+     * CARTO-Kacheln in doppelter Auflösung (scharf auf hochauflösenden Displays).
+     * Die Karte selbst kommt ohne Beschriftung; die Ortsnamen liegen als eigene Ebene
+     * ganz oben, damit Radar, Windfarben und Standortpunkt sie nicht verdecken.
+     */
+    private class Carto(style: String) : OnlineTileSourceBase(
+        "carto_$style", 1, 18, 256, ".png",
+        arrayOf("https://a.basemaps.cartocdn.com/rastertiles/$style/", "https://b.basemaps.cartocdn.com/rastertiles/$style/",
+            "https://c.basemaps.cartocdn.com/rastertiles/$style/"),
+        "© OpenStreetMap, © CARTO"
+    ) {
+        override fun getTileURLString(index: Long): String =
+            baseUrl + MapTileIndex.getZoom(index) + "/" + MapTileIndex.getX(index) + "/" + MapTileIndex.getY(index) + "@2x.png"
+    }
+
+    /** Ortsnamen als oberste Kartenebene (nach allen Wetterebenen hinzufügen). */
+    fun addLabels(map: MapView, p: Ui.Palette, bright: Boolean = false) {
+        val provider = MapTileProviderBasic(map.context.applicationContext, Carto("light_only_labels"))
+        val labels = TilesOverlay(provider, map.context.applicationContext).apply {
+            setColorFilter(if (p.dark) darkFilter(bright) else lightFilter())
+            setLoadingBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setLoadingLineColor(android.graphics.Color.TRANSPARENT)
+        }
+        provider.tileRequestCompleteHandlers.add(map.tileRequestCompleteHandler)
+        map.overlays.add(labels)
+    }
+
     fun createMap(ctx: Context, p: Ui.Palette, center: GeoPoint, zoom: Double, bright: Boolean = false): MapView {
         configure(ctx)
         val map = MapView(ctx)
-        map.setTileSource(TileSourceFactory.MAPNIK)
+        map.setTileSource(Carto("light_nolabels"))
         map.isTilesScaledToDpi = true
         map.setMultiTouchControls(true)
         map.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)

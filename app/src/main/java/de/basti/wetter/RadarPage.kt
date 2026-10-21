@@ -106,10 +106,15 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
     private val loading = Collections.synchronizedSet(HashSet<Key>())
     private val queue = LinkedBlockingDeque<Key>()
     private val main = Handler(Looper.getMainLooper())
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 225 }
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 200 }
     private val a = Point()
     private val b = Point()
     @Volatile private var alive = true
+
+    /** Weltweites Radar (RainViewer) für alles außerhalb des DWD-Radarverbunds. */
+    val world = WorldRadar(map) { main.post { map.invalidate(); onProgress() } }
+    private val cut = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT) }
+    private val c0 = Point()
 
     init {
         repeat(4) {
@@ -129,6 +134,7 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
         alive = false
         repeat(4) { queue.offer(Key(-1, null, 0, 0, 0)) }
         cache.evictAll()
+        world.destroy()
     }
 
     private fun zoomFor(): Int = floor(map.zoomLevelDouble).toInt().coerceIn(4, 8)
@@ -156,6 +162,8 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
     /** Lädt zuerst die Kacheln des aktuellen Bildes, danach alle übrigen Bilder vor. */
     fun schedule() {
         if (frames.isEmpty()) return
+        val measured = frames.filter { it <= (run ?: Long.MAX_VALUE) }
+        if (measured.isNotEmpty()) world.schedule(measured, frame.coerceAtMost(measured.size - 1))
         queue.clear()
         val order = ArrayList<Long>()
         order.add(frames[frame.coerceIn(0, frames.size - 1)])
@@ -168,7 +176,7 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
     }
 
     /** Anteil fertig geladener Bilder (für die Anzeige). */
-    fun readyFrames(): Int = frames.count { t -> visible(t).all { cache.get(it) != null || it in empty } }
+    fun readyFrames(): Int = frames.count { t -> visible(t).all { cache.get(it) != null || it in empty } && (t > (run ?: Long.MAX_VALUE) || world.ready(t)) }
 
     private fun load(k: Key) {
         if (!loading.add(k)) return
@@ -218,6 +226,21 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
         if (shadow || frames.isEmpty()) return
         val t = frames[frame.coerceIn(0, frames.size - 1)]
         val pj = mv.projection
+
+        // 1) Weltradar in eigener Ebene, Gebiet des DWD-Radarverbunds ausgestanzt
+        if (t <= (run ?: Long.MAX_VALUE) && world.hasFrame(t)) {
+            val layer = c.saveLayer(null, null)
+            world.draw(c, mv, t)
+            for ((lat, lon) in DWD_SITES) {
+                pj.toPixels(GeoPoint(lat, lon), c0)
+                pj.toPixels(GeoPoint(lat + DWD_RANGE_KM / 111.2, lon), a)
+                val r = abs(c0.y - a.y).toFloat()
+                c.drawCircle(c0.x.toFloat(), c0.y.toFloat(), r, cut)
+            }
+            c.restoreToCount(layer)
+        }
+
+        // 2) DWD-Radar darüber
         for (k in visible(t)) {
             val bmp = cache.get(k) ?: continue
             pj.toPixels(GeoPoint(Tiles.latOf(k.y.toDouble(), k.z), Tiles.lonOf(k.x.toDouble(), k.z)), a)
@@ -227,6 +250,22 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
     }
 
     companion object {
+        /** Standorte des DWD-Radarverbunds; Reichweite im Komposit ca. 150 km. */
+        val DWD_SITES = listOf(
+            53.564 to 6.748, 53.339 to 7.025, 54.004 to 10.047, 51.125 to 13.769, 49.541 to 12.403,
+            51.406 to 6.967, 47.874 to 8.004, 51.311 to 8.802, 52.460 to 9.695, 48.175 to 12.102,
+            48.042 to 10.219, 50.500 to 11.135, 50.110 to 6.548, 49.985 to 8.712, 52.648 to 13.858,
+            54.176 to 12.058, 48.586 to 9.783, 52.160 to 11.176
+        )
+        const val DWD_RANGE_KM = 150.0
+
+        /** Liegt ein Punkt im Erfassungsbereich des DWD-Radarverbunds? */
+        fun inDwd(lat: Double, lon: Double): Boolean = DWD_SITES.any { (la, lo) ->
+            val dy = (lat - la) * 111.2
+            val dx = (lon - lo) * 111.2 * kotlin.math.cos(Math.toRadians(lat))
+            dx * dx + dy * dy < DWD_RANGE_KM * DWD_RANGE_KM
+        }
+
         private val ISO = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         fun iso(sec: Long): String = synchronized(ISO) { ISO.format(Date(sec * 1000)) }
 
@@ -262,6 +301,8 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     private val overlay = RadarOverlay(map) { updateLabel() }
     private val warnOverlay = WarnMapOverlay(map)
     private lateinit var warnToggle: TextView
+    private lateinit var warnLegend: LinearLayout
+    private lateinit var warnInfo: LinearLayout
     private val timeline = TimelineView(ctx, p)
     private val timeLabel = Ui.tv(ctx, "", 17f, p.text, true)
     private val subLabel = Ui.tv(ctx, "", 12.5f, p.muted)
@@ -285,7 +326,9 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         map.overlays.add(warnOverlay)
         map.overlays.add(overlay)
         map.overlays.add(marker)
+        MapSupport.addLabels(map, p)          // Ortsnamen über dem Radar
         warnOverlay.isEnabled = false
+        warnOverlay.onTap = { g -> showWarningsAt(g) }
         marker.point = center
         addView(map, LayoutParams(MATCH, MATCH))
         map.addMapListener(object : MapListener {
@@ -325,14 +368,41 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
             setPadding(dp(14), dp(8), dp(14), dp(8))
             setOnClickListener { setWarnLayer(!warnOverlay.isEnabled) }
         }
-        addView(LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
-            setPadding(dp(14), dp(4), dp(4), dp(4))
-            addView(Ui.tv(ctx, "Regenradar", 15f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(10) })
-            addView(warnToggle)
-        }, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
+        val topBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
+                setPadding(dp(14), dp(4), dp(4), dp(4))
+                addView(Ui.tv(ctx, "Regenradar", 15f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(10) })
+                addView(warnToggle)
+            }, LinearLayout.LayoutParams(WRAP, WRAP))
+            // Legende der Warnstufen (nur bei eingeschalteter Warnkarte)
+            warnLegend = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(16), p.border, 1)
+                setPadding(dp(10), dp(6), dp(12), dp(6))
+                for (lvl in 1..4) {
+                    addView(View(ctx).apply { background = Ui.rect(Warning.color(lvl), dpf(5)) },
+                        LinearLayout.LayoutParams(dp(10), dp(10)).apply { leftMargin = if (lvl == 1) 0 else dp(10); rightMargin = dp(5) })
+                    addView(Ui.tv(ctx, Warning.COLOR_NAMES[lvl], 12f, p.muted))
+                }
+                addView(Ui.tv(ctx, "  ·  antippen", 12f, p.muted))
+            }
+            addView(warnLegend, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(8) })
+            // Angetippte Warnungen
+            warnInfo = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                background = Ui.rect(Ui.withAlpha(p.surface, 245), dpf(18), p.border, 1)
+                setPadding(dp(14), dp(10), dp(14), dp(12))
+                visibility = View.GONE
+                setOnClickListener { visibility = View.GONE }
+            }
+            addView(warnInfo, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
+        }
+        addView(topBox, LayoutParams(MATCH, WRAP, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), dp(68), 0) })
         setWarnLayer(false)
 
         // Zurück zum Ort
@@ -343,8 +413,11 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
         // Quellenangabe
-        addView(Ui.tv(ctx, "Radar © DWD  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Radar © DWD, Weather data by Rain Viewer  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
+            setOnClickListener {
+                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.rainviewer.com"))) }
+            }
         }, LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(18), dp(4)) })
 
         timeline.onChange = { setFrame(it); stop() }
@@ -353,10 +426,46 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
     private fun setWarnLayer(on: Boolean) {
         warnOverlay.isEnabled = on
-        warnToggle.background = if (on) Ui.rect(p.accent, dpf(18)) else Ui.pressable(p, p.surfaceHi, dpf(18))
-        warnToggle.setTextColor(if (on) p.onAccent else p.text)
+        // Aus: nur Umriss, gedämpfte Schrift – An: Akzentfarbe. So ist der Zustand eindeutig.
+        warnToggle.background = if (on) Ui.rect(p.accent, dpf(18)) else Ui.pressable(p, Ui.withAlpha(p.surface, 0), dpf(18), p.border, 1)
+        warnToggle.setTextColor(if (on) p.onAccent else p.muted)
+        warnLegend.visibility = if (on) View.VISIBLE else View.GONE
+        if (!on) warnInfo.visibility = View.GONE
         if (on) warnOverlay.reload()
         map.invalidate()
+    }
+
+    /** Warnungen an der angetippten Stelle anzeigen. */
+    private fun showWarningsAt(g: GeoPoint) {
+        warnInfo.removeAllViews()
+        warnInfo.addView(Ui.tv(context, "Lade Warnungen …", 13f, p.muted))
+        warnInfo.visibility = View.VISIBLE
+        Thread {
+            val res = runCatching { Warnings.fetch(context, g.latitude, g.longitude) }
+            main.post {
+                warnInfo.removeAllViews()
+                val list = res.getOrNull()
+                when {
+                    res.isFailure -> warnInfo.addView(Ui.tv(context, "Warnungen nicht abrufbar – keine Verbindung?", 13f, p.muted))
+                    list == null -> warnInfo.addView(Ui.tv(context, "Keine DWD-Warnungen außerhalb Deutschlands", 13f, p.muted))
+                    list.isEmpty() -> warnInfo.addView(Ui.tv(context, "Keine Warnung an dieser Stelle", 13.5f, p.text, true))
+                    else -> for ((i, w) in list.take(4).withIndex()) {
+                        warnInfo.addView(LinearLayout(context).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            addView(View(context).apply { background = Ui.rect(Warning.color(w.level), dpf(5)) },
+                                LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(8) })
+                            addView(LinearLayout(context).apply {
+                                orientation = LinearLayout.VERTICAL
+                                addView(Ui.tv(context, w.event.lowercase().replaceFirstChar { it.uppercase() }, 14f, p.text, true))
+                                addView(Ui.tv(context, "${Warning.COLOR_NAMES[w.level]}  ·  ${w.timeRange()}", 12f, p.muted))
+                            })
+                        }, LinearLayout.LayoutParams(MATCH, WRAP).apply { if (i > 0) topMargin = dp(8) })
+                    }
+                }
+                warnInfo.addView(Ui.tv(context, "Antippen zum Schließen", 11f, p.muted).apply { setPadding(0, dp(6), 0, 0) })
+            }
+        }.start()
     }
 
     fun setCenter(g: GeoPoint) {
@@ -372,6 +481,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         subLabel.text = "Lade Radar …"
         Thread {
             val run = RadarOverlay.latestRun()
+            overlay.world.refresh()
             val now = System.currentTimeMillis() / 1000
             val base = run ?: (now - now % 300 - 600)
             val step = 15 * 60L
@@ -409,7 +519,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
             else -> "$clock  ·  in $diff min"
         }
         val ready = overlay.readyFrames()
-        val kind = if (diff > 0) "Vorhersage (DWD-Nowcast)" else "Messung"
+        val kind = if (diff > 0) "Vorhersage · nur DWD-Gebiet" else "Messung"
         subLabel.text = if (ready < fr.size) "$kind  ·  lade $ready/${fr.size}" else kind
     }
 
@@ -431,6 +541,142 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     fun onResume() { map.onResume(); loadFrames() }
     fun onPause() { stop(); map.onPause() }
     fun destroy() { overlay.destroy(); warnOverlay.destroy(); map.onDetach() }
+}
+
+/**
+ * Weltweites Regenradar von Rain Viewer (kostenlos für private Nutzung, Quellenangabe Pflicht).
+ * Freie Stufe: nur Messungen der letzten 2 Stunden (10-Minuten-Takt), Zoom bis 7, Farbschema "Universal Blue".
+ * Höchstens ~90 Abrufe pro Minute (Grenze von Rain Viewer: 100).
+ */
+class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
+    data class Key(val time: Long, val z: Int, val x: Int, val y: Int)
+
+    @Volatile private var host = ""
+    @Volatile private var frames: List<Pair<Long, String>> = emptyList()   // Zeit → Pfad
+    private val cache = object : LruCache<Key, Bitmap>(min(Runtime.getRuntime().maxMemory() / 6, 48L * 1024 * 1024).toInt()) {
+        override fun sizeOf(key: Key, value: Bitmap) = value.byteCount
+    }
+    private val empty = Collections.synchronizedSet(HashSet<Key>())
+    private val loading = Collections.synchronizedSet(HashSet<Key>())
+    private val queue = LinkedBlockingDeque<Key>()
+    private val stamps = java.util.ArrayDeque<Long>()
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 200 }
+    private val a = Point()
+    private val b = Point()
+    @Volatile private var alive = true
+
+    init {
+        repeat(2) {
+            Thread {
+                while (alive) {
+                    val k = try { queue.take() } catch (e: InterruptedException) { break }
+                    if (k.time < 0) break
+                    throttle()
+                    load(k)
+                }
+            }.apply { isDaemon = true; start() }
+        }
+    }
+
+    fun destroy() {
+        alive = false
+        repeat(2) { queue.offer(Key(-1, 0, 0, 0)) }
+        cache.evictAll()
+    }
+
+    /** Liste der verfügbaren Bilder holen (im Hintergrund aufrufen). */
+    fun refresh() {
+        runCatching {
+            val o = org.json.JSONObject(Net.get("https://api.rainviewer.com/public/weather-maps.json", 10000))
+            val past = o.getJSONObject("radar").getJSONArray("past")
+            val list = ArrayList<Pair<Long, String>>()
+            for (i in 0 until past.length()) {
+                val f = past.getJSONObject(i)
+                list.add(f.getLong("time") to f.getString("path"))
+            }
+            host = o.optString("host", "https://tilecache.rainviewer.com")
+            frames = list.sortedBy { it.first }
+        }
+    }
+
+    /** Passendes Rain-Viewer-Bild zur Zeit t (höchstens 10 Minuten daneben), sonst null. */
+    private fun pathFor(t: Long): String? = frames.minByOrNull { abs(it.first - t) }?.takeIf { abs(it.first - t) <= 600 }?.second
+    private fun timeFor(t: Long): Long? = frames.minByOrNull { abs(it.first - t) }?.takeIf { abs(it.first - t) <= 600 }?.first
+
+    fun hasFrame(t: Long) = timeFor(t) != null
+
+    private fun zoom() = (floor(map.zoomLevelDouble).toInt() - 1).coerceIn(1, 7)   // 512er-Kacheln
+
+    private fun visible(rt: Long): List<Key> {
+        val bb = map.boundingBox
+        val z = zoom()
+        val n = 1 shl z
+        val x0 = floor(Tiles.xOf(bb.lonWest, z)).toInt()
+        val x1 = floor(Tiles.xOf(bb.lonEast, z)).toInt()
+        val y0 = floor(Tiles.yOf(bb.latNorth, z)).toInt().coerceIn(0, n - 1)
+        val y1 = floor(Tiles.yOf(bb.latSouth, z)).toInt().coerceIn(0, n - 1)
+        val out = ArrayList<Key>()
+        val xs = if (x1 >= x0) (x0..x1) else (x0..x1 + n)
+        for (xx in xs) for (y in y0..y1) {
+            val x = Math.floorMod(xx, n)
+            // Kachel liegt komplett im DWD-Gebiet? Dann nicht laden.
+            val lonW = Tiles.lonOf(x.toDouble(), z); val lonE = Tiles.lonOf(x + 1.0, z)
+            val latN = Tiles.latOf(y.toDouble(), z); val latS = Tiles.latOf(y + 1.0, z)
+            if (RadarOverlay.inDwd(latN, lonW) && RadarOverlay.inDwd(latN, lonE) && RadarOverlay.inDwd(latS, lonW) &&
+                RadarOverlay.inDwd(latS, lonE) && RadarOverlay.inDwd((latN + latS) / 2, (lonW + lonE) / 2)) continue
+            out.add(Key(rt, z, x, y))
+        }
+        return out
+    }
+
+    fun schedule(dwdFrames: List<Long>, current: Int) {
+        if (frames.isEmpty()) return
+        queue.clear()
+        val order = ArrayList<Long>()
+        timeFor(dwdFrames[current.coerceIn(0, dwdFrames.size - 1)])?.let { order.add(it) }
+        for (i in 1 until dwdFrames.size) for (j in listOf(current + i, current - i)) {
+            if (j in dwdFrames.indices) timeFor(dwdFrames[j])?.let { if (it !in order) order.add(it) }
+        }
+        for (t in order) for (k in visible(t)) if (cache.get(k) == null && k !in empty && k !in loading) queue.offer(k)
+    }
+
+    fun ready(t: Long): Boolean { val rt = timeFor(t) ?: return true; return visible(rt).all { cache.get(it) != null || it in empty } }
+
+    private fun throttle() {
+        while (alive) {
+            val wait = synchronized(stamps) {
+                val now = System.currentTimeMillis()
+                while (stamps.isNotEmpty() && now - stamps.first() > 60_000) stamps.removeFirst()
+                if (stamps.size < 90) { stamps.addLast(now); return }
+                max(200L, 60_000 - (now - stamps.first()))
+            }
+            try { Thread.sleep(wait) } catch (e: InterruptedException) { return }
+        }
+    }
+
+    private fun load(k: Key) {
+        if (!loading.add(k)) return
+        try {
+            val path = frames.firstOrNull { it.first == k.time }?.second ?: return
+            val bytes = Net.getBytes("$host$path/512/${k.z}/${k.x}/${k.y}/2/1_1.png", 15000)
+            val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            if (bmp == null) empty.add(k) else cache.put(k, bmp)
+        } finally {
+            loading.remove(k)
+        }
+        onLoaded()
+    }
+
+    fun draw(c: Canvas, mv: MapView, t: Long) {
+        val rt = timeFor(t) ?: return
+        val pj = mv.projection
+        for (k in visible(rt)) {
+            val bmp = cache.get(k) ?: continue
+            pj.toPixels(GeoPoint(Tiles.latOf(k.y.toDouble(), k.z), Tiles.lonOf(k.x.toDouble(), k.z)), a)
+            pj.toPixels(GeoPoint(Tiles.latOf(k.y + 1.0, k.z), Tiles.lonOf(k.x + 1.0, k.z)), b)
+            c.drawBitmap(bmp, null, RectF(a.x - 0.5f, a.y - 0.5f, b.x + 0.5f, b.y + 0.5f), paint)
+        }
+    }
 }
 
 /** Kleine Farblegende für Niederschlagsstärke. */
@@ -470,6 +716,14 @@ class WarnMapOverlay(private val map: MapView) : Overlay() {
     private val b = Point()
     @Volatile private var alive = true
     private var gen = 0          // neue Generation = Warnungen neu laden
+    var onTap: ((GeoPoint) -> Unit)? = null
+
+    override fun onSingleTapConfirmed(e: android.view.MotionEvent, mapView: MapView): Boolean {
+        if (!isEnabled) return false
+        val g = mapView.projection.fromPixels(e.x.toInt(), e.y.toInt()) as GeoPoint
+        onTap?.invoke(g)
+        return true
+    }
 
     init {
         repeat(2) {

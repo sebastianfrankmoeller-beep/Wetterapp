@@ -18,6 +18,7 @@ import de.basti.wetter.Prefs
 import de.basti.wetter.Ui
 import de.basti.wetter.WeatherIcons
 import de.basti.wetter.tempColor
+import de.basti.wetter.nowcastSummary
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -114,9 +115,12 @@ object WidgetRenderer {
 
         val rest = h - y - pad
         when (effMode) {
-            MODE_HOURS -> if (rest > 50 * d) drawHours(c, f, pad, y, w - 2 * pad, rest, d, p, text)
+            MODE_HOURS -> hoursWithRain(c, f, y, rest, w, pad, d, p, text)
             MODE_DAYS -> if (rest > 26 * d) drawDays(c, f, pad, y, w - 2 * pad, rest, d, p, text)
-            MODE_ALL -> {
+            MODE_ALL -> if (rest < 142 * d) {
+                // zu wenig Platz für Tage: Stunden größer + Regen-Hinweis statt leerer Fläche
+                hoursWithRain(c, f, y, rest, w, pad, d, p, text)
+            } else {
                 if (rest > 50 * d) {
                     val hh = min(86 * d, rest)
                     drawHours(c, f, pad, y, w - 2 * pad, hh, d, p, text)
@@ -244,30 +248,63 @@ object WidgetRenderer {
         }
     }
 
-    private fun drawHours(c: Canvas, f: Forecast, x: Float, y: Float, w: Float, h: Float, d: Float, p: Ui.Palette, text: TextPaint) {
-        val colW = 50 * d
+    private fun hoursWithRain(c: Canvas, f: Forecast, y: Float, rest: Float, w: Float, pad: Float, d: Float, p: Ui.Palette, text: TextPaint) {
+        if (rest <= 50 * d) return
+        val rain = rainLine(f)
+        val lineH = if (rain != null && rest > 100 * d) 24 * d else 0f
+        val hh = rest - lineH
+        drawHours(c, f, pad, y, w - 2 * pad, hh, d, p, text, (hh / (78 * d)).coerceIn(1f, 1.45f))
+        if (lineH > 0) drawRainLine(c, rain!!, pad, y + rest - 4 * d, w - 2 * pad, d, p, text)
+    }
+
+    /** Kurztext zum Regen der nächsten Stunden (wie in der App), null ohne Nowcast. */
+    private fun rainLine(f: Forecast): String? {
+        val nc = f.nowcast.take(13)
+        if (nc.size < 4) return null
+        val now = System.currentTimeMillis() / 1000
+        val upcoming = nc.filter { it.first + 900 > now }
+        if (upcoming.size < 4) return null
+        val (head, sub) = nowcastSummary(f, upcoming)
+        // Uhrzeiten statt "in 40 Min." – das Widget wird nur etwa alle 30 Minuten neu gezeichnet
+        return if (sub.isEmpty()) head else "${if (f.nowcastSnow) "Schnee" else "Regen"}  ·  $sub"
+    }
+
+    private fun drawRainLine(c: Canvas, line: String, x: Float, baseline: Float, w: Float, d: Float, p: Ui.Palette, text: TextPaint) {
+        val dry = line.startsWith("Kein")
+        val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (dry) p.muted else p.rain }
+        c.drawCircle(x + 4 * d, baseline - 4.5f * d, 3.5f * d, dot)
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = Ui.TF_MEDIUM
+        text.textSize = 12.5f * d
+        text.color = if (dry) p.muted else p.text
+        c.drawText(TextUtils.ellipsize(line, text, w - 14 * d, TextUtils.TruncateAt.END).toString(), x + 14 * d, baseline, text)
+        text.typeface = Ui.TF_REGULAR
+    }
+
+    private fun drawHours(c: Canvas, f: Forecast, x: Float, y: Float, w: Float, h: Float, d: Float, p: Ui.Palette, text: TextPaint, sc: Float = 1f) {
+        val colW = 50 * d * min(sc, 1.15f)
         val n = min(f.hours.size - 1, max(1, (w / colW).toInt()))
         if (n <= 0) return
         val cw = w / n
-        val icon = min(28 * d, h * 0.34f)
+        val icon = min(28 * d * sc, h * 0.36f)
         text.textAlign = Paint.Align.CENTER
         for (k in 0 until n) {
             val hr = f.hours[k + 1]
             val cx = x + k * cw + cw / 2
             text.typeface = Ui.TF_REGULAR
-            text.textSize = 11.5f * d
+            text.textSize = 11.5f * d * sc
             text.color = p.muted
-            c.drawText("%02d".format(f.hour(hr.t)), cx, y + 12 * d, text)
-            WeatherIcons.draw(c, hr.code, hr.isDay, cx, y + 16 * d + icon / 2, icon, p)
+            c.drawText("%02d".format(f.hour(hr.t)), cx, y + 12 * d * sc, text)
+            WeatherIcons.draw(c, hr.code, hr.isDay, cx, y + 16 * d * sc + icon / 2, icon, p)
             text.typeface = Ui.TF_MEDIUM
-            text.textSize = 14 * d
+            text.textSize = 14 * d * sc
             text.color = p.text
-            val ty = y + 16 * d + icon + 15 * d
+            val ty = y + 16 * d * sc + icon + 15 * d * sc
             c.drawText(Fmt.temp(hr.temp), cx, ty, text)
-            if (hr.precip >= 0.1 && ty + 13 * d < y + h) {
-                text.textSize = 10.5f * d
+            if (hr.precip >= 0.1 && ty + 13 * d * sc < y + h) {
+                text.textSize = 10.5f * d * sc
                 text.color = if (hr.snow > 0.05) p.snow else p.rain
-                c.drawText("${Fmt.mm(hr.precip)}", cx, ty + 13 * d, text)
+                c.drawText("${Fmt.mm(hr.precip)} mm", cx, ty + 13 * d * sc, text)
             }
         }
         text.textAlign = Paint.Align.LEFT

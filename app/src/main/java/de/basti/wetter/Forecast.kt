@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
@@ -98,7 +99,8 @@ class Forecast(
     val fetchedAt: Long,      // Millisekunden
     val hasD2: Boolean,
     val nowcastSnow: Boolean = false,  // Niederschlag in den nächsten Stunden überwiegend als Schnee
-    val uv: Map<Long, Double> = emptyMap()  // UV-Index je Stunde (nächste 24 h)
+    val uv: Map<Long, Double> = emptyMap(),  // UV-Index je Stunde (nächste 24 h)
+    val nowcastRadarUntil: Long = 0    // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -210,15 +212,18 @@ object WeatherApi {
         // Alle Abfragen parallel.
         var d2: String? = null
         var uv: String? = null
+        var radar: String? = null
         val t = Thread { d2 = runCatching { Net.get(d2Url) }.getOrNull() }
         val tu = Thread { uv = runCatching { Net.get(uvUrl, 8000) }.getOrNull() }
-        t.start(); tu.start()
+        val tr = Thread { radar = RadarNowcast.fetchRaw(p) }
+        t.start(); tu.start(); tr.start()
         val ec = Net.get(ecUrl)
-        t.join(20000); tu.join(10000)
+        t.join(20000); tu.join(10000); tr.join(12000)
         return JSONObject()
             .put("ec", JSONObject(ec))
             .put("d2", d2?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("uv", uv?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
+            .put("radar", radar?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("at", System.currentTimeMillis())
             .toString()
     }
@@ -336,6 +341,19 @@ object WeatherApi {
             nowcastSnowy = snow > rain && snow > 0.05
         }
 
+        // Gemessener Regen + DWD-Radar-Nowcast ersetzt die Modellwerte, soweit vorhanden (genauer als ICON-D2)
+        var radarUntil = 0L
+        root.optJSONObject("radar")?.let { r ->
+            val slots = RadarNowcast.slots(r).filter { it.first + 900 > nowSec }
+            if (slots.size >= 4) {
+                radarUntil = slots.last().first + 900
+                val model = nowcast.filter { it.first >= radarUntil }
+                nowcast.clear()
+                nowcast.addAll(slots)
+                nowcast.addAll(model)
+            }
+        }
+
         // Sonnenauf-/untergang je Tag
         val sun = HashMap<Long, Pair<Long, Long>>()
         ec.optJSONObject("daily")?.let { dd ->
@@ -352,7 +370,7 @@ object WeatherApi {
             val tt = u.optJSONArray("time"); val vv = u.optJSONArray("uv_index")
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
-        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv)
+        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {
@@ -510,4 +528,71 @@ object Fmt {
         1 -> "Überwiegend klar"
         else -> code(code)
     } else code(code)
+}
+
+
+/**
+ * Regen-Nowcast aus dem DWD-Radar (RADOLAN RV: Messung + 2 Stunden Vorhersage, 1 km, 5 Minuten),
+ * abgerufen über Bright Sky (kostenlos, ohne Schlüssel). Nur im Radargebiet um Deutschland.
+ */
+object RadarNowcast {
+    private val ISO = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+
+    /** Liegt der Ort sicher im Erfassungsbereich des DWD-Radarverbunds? */
+    fun covers(lat: Double, lon: Double) = lat in 47.0..55.3 && lon in 5.6..15.4
+
+    fun fetchRaw(p: Place): String? {
+        if (!covers(p.lat, p.lon)) return null
+        val now = System.currentTimeMillis() / 1000
+        val from = synchronized(ISO) { ISO.format(java.util.Date((now - 20 * 60) * 1000)) }
+        val to = synchronized(ISO) { ISO.format(java.util.Date((now + 135 * 60) * 1000)) }
+        val url = "https://api.brightsky.dev/radar?lat=%.4f&lon=%.4f&distance=2500&format=plain".format(Locale.US, p.lat, p.lon) +
+            "&date=${Net.enc(from)}&last_date=${Net.enc(to)}"
+        return runCatching { Net.get(url, 10000) }.getOrNull()
+    }
+
+    private fun parseIso(s: String): Long? {
+        val v = s.replace("Z", "+00:00")
+        for (pattern in listOf("yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")) {
+            val r = runCatching { SimpleDateFormat(pattern, Locale.US).parse(v)?.time }.getOrNull()
+            if (r != null) return r / 1000
+        }
+        return null
+    }
+
+    /** 15-Minuten-Mengen (Start der Viertelstunde, mm) – Mittel über 3 × 3 km um den Ort. */
+    fun slots(root: JSONObject): List<Pair<Long, Double>> {
+        val frames = root.optJSONArray("radar") ?: return emptyList()
+        val pos = root.opt("latlon_position")
+        var px = -1; var py = -1
+        when (pos) {
+            is JSONObject -> { px = pos.optDouble("x", -1.0).toInt(); py = pos.optDouble("y", -1.0).toInt() }
+            is JSONArray -> if (pos.length() >= 2) { px = pos.optDouble(0, -1.0).toInt(); py = pos.optDouble(1, -1.0).toInt() }
+        }
+        val sums = java.util.TreeMap<Long, Pair<Double, Int>>()
+        for (i in 0 until frames.length()) {
+            val f = frames.optJSONObject(i) ?: continue
+            val t = parseIso(f.optString("timestamp")) ?: continue
+            val grid = f.optJSONArray("precipitation_5") ?: continue
+            val h = grid.length()
+            if (h == 0) continue
+            val w = grid.optJSONArray(0)?.length() ?: 0
+            val cx = if (px in 0 until w) px else w / 2
+            val cy = if (py in 0 until h) py else h / 2
+            var sum = 0.0; var n = 0
+            for (y in cy - 1..cy + 1) for (x in cx - 1..cx + 1) {
+                val row = grid.optJSONArray(y) ?: continue
+                if (x < 0 || x >= row.length() || row.isNull(x)) continue
+                sum += row.optDouble(x, 0.0); n++
+            }
+            if (n == 0) continue
+            val mm = sum / n * 0.01                     // 0,01 mm je 5 Minuten
+            val start = t - 300                         // Wert gilt für die 5 Minuten bis t
+            val slot = start - Math.floorMod(start, 900L)
+            val prev = sums[slot] ?: (0.0 to 0)
+            sums[slot] = (prev.first + mm) to (prev.second + 1)
+        }
+        // nur vollständige Viertelstunden
+        return sums.filter { it.value.second >= 3 }.map { it.key to it.value.first }
+    }
 }

@@ -156,7 +156,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         add(nowcastCard, 14)
 
         // ------------------------------------------------------------ Stündlich
-        add(section("Stündlich"), 8)
+        add(section("Stündlich", "Regen in mm  ·  Wind in km/h"), 8)
         add(LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             background = Ui.rect(p.surface, dpf(24), p.border, 1)
@@ -190,6 +190,16 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private fun section(t: String) = Ui.tv(context, t.uppercase(), 12.5f, p.muted, true).apply {
         letterSpacing = 0.08f
         setPadding(dp(6), 0, 0, 0)
+    }
+
+    /** Abschnittstitel mit kleinem Einheiten-Hinweis dahinter. */
+    private fun section(t: String, hint: String) = section(t).apply {
+        val title = t.uppercase()
+        val sp = android.text.SpannableString("$title    $hint")
+        val start = title.length + 4
+        sp.setSpan(android.text.style.RelativeSizeSpan(0.88f), start, sp.length, 0)
+        sp.setSpan(android.text.style.TypefaceSpan("sans-serif"), start, sp.length, 0)
+        text = sp
     }
 
     private fun card() = LinearLayout(context).apply {
@@ -309,12 +319,13 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         }
         hints.visibility = if (hints.childCount > 0) View.VISIBLE else View.GONE
 
-        // Regen der nächsten Stunden (nur im ICON-D2-Gebiet verfügbar)
+        // Regen der nächsten Stunden (DWD-Radar + Nowcast, danach ICON-D2; nur im D2-/Radargebiet)
         val nc = f.nowcast.take(13)
         if (nc.size >= 4) {
             nowcastCard.visibility = View.VISIBLE
             nowcastView.forecast = f
             nowcastView.snowy = f.nowcastSnow
+            nowcastView.radarUntil = f.nowcastRadarUntil
             nowcastView.data = nc
             val (head, sub) = nowcastSummary(f, nc)
             nowcastText.text = head
@@ -389,38 +400,39 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         }
     }
 
-    /** Überschrift und Unterzeile der Regenkarte. */
-    private fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, String> {
-        val what = if (f.nowcastSnow) "Schnee" else "Regen"
-        val wet = { v: Double -> v * 4 >= 0.1 }        // ab 0,1 mm/h
-        val hours = ((nc.last().first - nc.first().first) / 3600.0 + 0.25).roundToInt()
-        val firstWet = nc.indexOfFirst { wet(it.second) }
-        if (firstWet < 0) return "Kein $what in den nächsten $hours Std." to ""
-        val now = System.currentTimeMillis() / 1000
-        fun mins(t: Long) = ((t - now) / 60).toInt().coerceAtLeast(0)
-        fun rel(t: Long): String {
-            val m = mins(t)
-            return if (m < 60) "$m Min." else {
-                val h = m / 60; val r = (m % 60 + 7) / 15 * 15
-                if (r == 0 || r == 60) "${if (r == 60) h + 1 else h} Std." else "$h Std. $r Min."
-            }
-        }
-        // Zusammenhängende nasse Phase ab dem ersten nassen Wert
-        var lastWet = firstWet
-        while (lastWet + 1 < nc.size && wet(nc[lastWet + 1].second)) lastWet++
-        val phase = nc.subList(firstWet, lastWet + 1)
-        val sum = phase.sumOf { it.second }
-        val strength = RainRate.NAMES[RainRate.level(phase.maxOf { it.second } * 4)]
-        val endTxt = if (lastWet + 1 < nc.size) "bis ca. ${f.hhmm(nc[lastWet + 1].first)}" else "hält an"
-        val amount = if (f.nowcastSnow) "${Fmt.mm(sum / 0.7)} cm" else "${Fmt.mm(sum)} mm"
-        return if (firstWet == 0) {
-            val head = if (lastWet + 1 < nc.size) "$what hört in ${rel(nc[lastWet + 1].first)} auf" else "$what hält an"
-            head to "$strength  ·  $endTxt  ·  $amount"
-        } else {
-            "$what in ${rel(nc[firstWet].first)}" to "$strength  ·  ab ${f.hhmm(nc[firstWet].first)}  ·  $endTxt  ·  $amount"
-        }
-    }
 }
 
 /** Uhrzeit (lokal am Ort) aus Millisekunden. */
 fun Forecast.hhmmLocal(ms: Long): String = hhmm(ms / 1000)
+
+/** Überschrift und Unterzeile der Regenkarte. */
+fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, String> {
+    val what = if (f.nowcastSnow) "Schnee" else "Regen"
+    val wet = { v: Double -> v * 4 >= 0.1 }        // ab 0,1 mm/h
+    val hours = ((nc.last().first - nc.first().first) / 3600.0 + 0.25).roundToInt()
+    val firstWet = nc.indexOfFirst { wet(it.second) }
+    if (firstWet < 0) return "Kein $what in den nächsten $hours Std." to ""
+    val now = System.currentTimeMillis() / 1000
+    fun mins(t: Long) = ((t - now) / 60).toInt().coerceAtLeast(0)
+    fun rel(t: Long): String {
+        val m = mins(t)
+        return if (m < 60) "$m Min." else {
+            val h = m / 60; val r = (m % 60 + 7) / 15 * 15
+            if (r == 0 || r == 60) "${if (r == 60) h + 1 else h} Std." else "$h Std. $r Min."
+        }
+    }
+    // Zusammenhängende nasse Phase ab dem ersten nassen Wert
+    var lastWet = firstWet
+    while (lastWet + 1 < nc.size && wet(nc[lastWet + 1].second)) lastWet++
+    val phase = nc.subList(firstWet, lastWet + 1)
+    val sum = phase.sumOf { it.second }
+    val strength = RainRate.NAMES[RainRate.level(phase.maxOf { it.second } * 4)]
+    val endTxt = if (lastWet + 1 < nc.size) "bis ca. ${f.hhmm(nc[lastWet + 1].first)}" else "hält an"
+    val amount = if (f.nowcastSnow) "${Fmt.mm(sum / 0.7)} cm" else "${Fmt.mm(sum)} mm"
+    return if (firstWet == 0) {
+        val head = if (lastWet + 1 < nc.size) "$what hört in ${rel(nc[lastWet + 1].first)} auf" else "$what hält an"
+        head to "$strength  ·  $endTxt  ·  $amount"
+    } else {
+        "$what in ${rel(nc[firstWet].first)}" to "$strength  ·  ab ${f.hhmm(nc[firstWet].first)}  ·  $endTxt  ·  $amount"
+    }
+}
