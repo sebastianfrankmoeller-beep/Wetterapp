@@ -413,7 +413,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
         // Quellenangabe
-        addView(Ui.tv(ctx, "Radar © DWD, Weather data by Rain Viewer  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Radar © DWD, Weather data by Rain Viewer  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
             setOnClickListener {
                 runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.rainviewer.com"))) }

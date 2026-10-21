@@ -551,7 +551,7 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             setOnClickListener { marker.point?.let { map.controller.animateTo(it, 7.0, 500L) } }
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
-        addView(Ui.tv(ctx, "Daten: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap, CARTO", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Daten: DWD ICON via Open-Meteo  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
         }, LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(18), dp(4)) })
 
