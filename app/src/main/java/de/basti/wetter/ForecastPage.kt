@@ -309,7 +309,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
                 val note = if (h0.thinHigh || (!h0.cloudHigh.isNaN() && h0.cloudHigh >= 30)) "\nHohe Schleierwolken zählen halb." else ""
                 "Schichten (Modell): $l$note"
             }
-        ).joinToString("\n")""
+        ).joinToString("\n")
         if (layersLine.text.isEmpty()) layersLine.visibility = View.GONE
         sourceLine.text = now.source
         sourceLine.setTextColor(if (now.obs != null) p.accent else p.muted)
