@@ -164,7 +164,7 @@ class DatenCheckTest {
                 val info = res.fold({ body ->
                     val slots = runCatching { RadarNowcast.slots(JSONObject(body)).size }.getOrElse { -1 }
                     "${body.length} Zeichen, $slots Viertelstunden"
-                }, { e -> "FEHLER ${e.javaClass.simpleName}: ${e.message}" })
+                }, { e -> "FEHLER ${e.javaClass.simpleName}: ${e.message} – ${errorBody(RadarNowcast.url(p))}" })
                 radarInfo[p.name] = "Radar-Abruf: $ms ms, $info"
                 if (ms > 10000) problems.add("${p.name}: Radar-Abruf dauert $ms ms (App wartet höchstens 10 s)")
             }
@@ -354,6 +354,15 @@ class DatenCheckTest {
     }
 
     // ================================================================ Hilfen
+
+    /** Fehlertext des Servers und die Adresse (für die Fehlersuche). */
+    private fun errorBody(url: String): String = runCatching {
+        val con = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        con.setRequestProperty("User-Agent", Net.UA)
+        val code = con.responseCode
+        val body = (if (code in 200..299) con.inputStream else con.errorStream)?.bufferedReader()?.readText() ?: ""
+        "HTTP $code ${body.take(300)} · $url"
+    }.getOrElse { "(${it.message})" }
 
     private fun ts(sec: Long): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(sec * 1000))
