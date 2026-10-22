@@ -29,7 +29,28 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ -f app/build/datencheck.md ]; then cat app/build/datencheck.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f app/build/datencheck.md ]; then
+            cat app/build/datencheck.md >> "$GITHUB_STEP_SUMMARY"
+            # Je Ort ein Hinweis (lesbar über die API, ohne Log-Download)
+            python3 - <<'PY'
+          import re
+          txt = open("app/build/datencheck.md", encoding="utf-8").read()
+          parts = re.split(r"\n(?=## )", txt)
+          for p in parts[1:10]:
+              title = p.splitlines()[0].lstrip("# ").strip()
+              msg = p.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice title=Datencheck {title}::{msg}")
+          PY
+          fi
+      - name: Testergebnisse
+        if: always()
+        shell: bash
+        run: |
+          grep -E "DatenCheckTest > .* (PASSED|FAILED|SKIPPED)" test.log | sed 's/^/::notice title=Test::/' | head -10 || true
+      - name: Fehler
+        if: always()
+        shell: bash
+        run: |
           grep -E "FAILED|AssertionError|expected:<|Widersprüche" -A3 test.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done || true
       - uses: actions/upload-artifact@v4
         if: always()
