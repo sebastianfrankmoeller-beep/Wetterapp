@@ -117,7 +117,8 @@ class Forecast(
     val nowcastRadarUntil: Long = 0,   // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
     val elevation: Double = Double.NaN, // Höhe des Ortes in m
     val obs: Observation.Obs? = null,  // Messwerte der nächsten DWD-Station (Bright Sky)
-    val nowcastNear: Map<Long, Double> = emptyMap() // stärkste Radarzelle im Umkreis von 3 km (mm je 15 Min.)
+    val nowcastNear: Map<Long, Double> = emptyMap(), // stärkste Radarzelle im Umkreis von 3 km (mm je 15 Min.)
+    val drizzle: Boolean = false       // Niesel-Lage: Radar sieht kaum etwas, Modell rechnet mit Niederschlag
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -374,14 +375,23 @@ object WeatherApi {
         // Gemessener Regen + DWD-Radar-Nowcast ersetzt die Modellwerte, soweit vorhanden (genauer als ICON-D2)
         var radarUntil = 0L
         var near: Map<Long, Double> = emptyMap()
+        var drizzle = false
+        val obs = root.optJSONObject("obs")?.let { Observation.parse(it) }
         root.optJSONObject("radar")?.let { r ->
             near = RadarNowcast.slots(r, nearMax = true).filter { it.first + 900 > nowSec }.toMap()
             val slots = RadarNowcast.slots(r).filter { it.first + 900 > nowSec }
             if (slots.size >= 4) {
                 radarUntil = slots.last().first + 900
+                val modelNc = nowcast.toMap()
                 val model = nowcast.filter { it.first >= radarUntil }
+                // Niesel aus tiefen Wolken sieht das Radar kaum (Strahl zu hoch): nur schwache Echos an der
+                // Messgrenze oder eine Station bis 40 km meldet Regen – und das Modell rechnet mit Niederschlag.
+                // Dann gilt der höhere Wert aus Radar und Modell, damit das Radar den Regen nicht "beendet".
+                val stationWet = obs?.fresh(nowSec) == true && obs.farWet
+                val modelWet = modelNc.filterKeys { it < radarUntil }.values.any { it * 4 >= 0.1 }
+                drizzle = modelWet && (RadarNowcast.weakEcho(r, nowSec) || stationWet)
                 nowcast.clear()
-                nowcast.addAll(slots)
+                nowcast.addAll(if (drizzle) slots.map { (t, v) -> t to maxOf(v, modelNc[t] ?: 0.0) } else slots)
                 nowcast.addAll(model)
             }
         }
@@ -414,7 +424,6 @@ object WeatherApi {
         // Tage aus allen Stunden ab Mitternacht; angezeigt werden die Stunden ab jetzt
         val days = buildDays(hours, offset, sun)
         hours.removeAll { it.t < currentHour }
-        val obs = root.optJSONObject("obs")?.let { Observation.parse(it) }
         Observation.adjust(hours, obs, nowSec)
 
         val uv = HashMap<Long, Double>()
@@ -423,7 +432,7 @@ object WeatherApi {
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
         return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
-            obs, near)
+            obs, near, drizzle)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {
@@ -608,6 +617,31 @@ object RadarNowcast {
             if (r != null) return r / 1000
         }
         return null
+    }
+
+    /**
+     * Niesel-Verdacht: In den letzten 30 Minuten gemessen nur schwache Echos an der Messgrenze
+     * (höchstens 0,03 mm je 5 Min. in einem Pixel), aber überhaupt welche im Ausschnitt.
+     */
+    fun weakEcho(root: JSONObject, nowSec: Long): Boolean {
+        val frames = root.optJSONArray("radar") ?: return false
+        var any = false
+        var mx = 0.0
+        for (i in 0 until frames.length()) {
+            val f = frames.optJSONObject(i) ?: continue
+            val t = parseIso(f.optString("timestamp")) ?: continue
+            if (t > nowSec || t < nowSec - 1800) continue
+            val grid = f.optJSONArray("precipitation_5") ?: continue
+            for (y in 0 until grid.length()) {
+                val row = grid.optJSONArray(y) ?: continue
+                for (x in 0 until row.length()) {
+                    val v = row.optDouble(x, 0.0)
+                    if (v > 0) any = true
+                    if (v > mx) mx = v
+                }
+            }
+        }
+        return any && mx <= 3
     }
 
     /**

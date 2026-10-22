@@ -474,7 +474,7 @@ fun Forecast.hhmmLocal(ms: Long): String = hhmm(ms / 1000)
 
 /** Überschrift und Unterzeile der Regenkarte. */
 fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, String> {
-    val what = if (f.nowcastSnow) "Schnee" else "Regen"
+    val what = if (f.nowcastSnow) "Schnee" else if (f.drizzle) "Niesel" else "Regen"
     val wet = { v: Double -> v * 4 >= 0.1 }        // ab 0,1 mm/h
     val hours = ((nc.last().first - nc.first().first) / 3600.0 + 0.25).roundToInt()
     val firstWet = nc.indexOfFirst { wet(it.second) }
@@ -500,7 +500,7 @@ fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, Stri
                 if (iTrace == 0 || nc[iTrace].first <= now) "" else " ab ca. ${f.hhmm(nc[iTrace].first)}"
             return head to "sehr leicht  ·  ${phase(iTrace, trace)}"
         }
-        return "Kein $what in den nächsten $hours Std." to ""
+        return "Kein ${if (f.nowcastSnow) "Schnee" else "Regen"} in den nächsten $hours Std." to ""
     }
     fun mins(t: Long) = ((t - now) / 60).toInt().coerceAtLeast(0)
     fun rel(t: Long): String {
@@ -518,6 +518,7 @@ fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, Stri
     val strength = RainRate.NAMES[RainRate.level(phase.maxOf { it.second } * 4)]
     val endTxt = if (lastWet + 1 < nc.size) "bis ca. ${f.hhmm(nc[lastWet + 1].first)}" else "hält an"
     val amount = if (f.nowcastSnow) "${Fmt.mm(sum / 0.7)} cm" else "${Fmt.mm(sum)} mm"
+        .let { if (f.drizzle) "$it nach Modell" else it }
     return if (firstWet == 0) {
         val head = if (lastWet + 1 < nc.size) "$what hört in ${rel(nc[lastWet + 1].first)} auf" else "$what hält an"
         head to "$strength  ·  $endTxt  ·  $amount"

@@ -95,7 +95,9 @@ object RunCheck {
             val temp = interp(hs, t) { it.temp }
             val feels = interp(hs, t) { it.feels }
             val gust = interp(hs, t) { it.gust }
-            val (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0)
+            var (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0)
+            // Niesel: unangenehm nass, auch wenn die Menge klein ist
+            if (lvl == GREEN && f.drizzle && !snowy && rain >= 0.1) { lvl = YELLOW; why = "Niesel" }
             val near = ncKey != null && rain < 0.1 && (f.nowcastNear[ncKey] ?: 0.0) * 4 >= 0.3
             Slot(t, rain, snowy, temp, feels, interp(hs, t) { it.wind }, gust, h?.windDir ?: Double.NaN,
                 h?.thunder ?: 0, h?.isDay ?: true, lvl, why, near)
@@ -162,7 +164,16 @@ object RunCheck {
         if (wind >= 15 && !dir.isNaN()) {
             hints.add(GlyphView.Kind.WIND to "Wind ${wind.roundToInt()} km/h aus ${Fmt.dir(dir)} – starte gegen den Wind, zurück mit Rückenwind")
         }
-        if (!anyRain) {
+        if (f.drizzle && slots.any { it.rain >= 0.1 }) {
+            // Ende der nassen Phase im Kurzfrist-Verlauf
+            val nowSec = System.currentTimeMillis() / 1000
+            val ahead = f.nowcast.filter { it.first + 900 > nowSec }
+            val firstWet = ahead.indexOfFirst { it.second * 4 >= 0.1 }
+            var last = firstWet
+            while (last >= 0 && last + 1 < ahead.size && ahead[last + 1].second * 4 >= 0.1) last++
+            val until = if (last >= 0 && last + 1 < ahead.size) "bis ca. ${f.hhmm(ahead[last + 1].first)}" else "über die nächsten Stunden"
+            hints.add(GlyphView.Kind.RAIN to "Niesel – Radar erfasst ihn kaum, Modell rechnet $until damit")
+        } else if (!anyRain) {
             val nearSlot = slots.firstOrNull { it.near }
             if (nearSlot != null) hints.add(GlyphView.Kind.RAIN to
                 "${if (nearSlot.snowy) "Schneeschauer" else "Schauer"} in der Nähe möglich" +

@@ -24,7 +24,10 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   antippen oder ziehen zeigt Uhrzeit und Menge.
   Regnet es nicht genau am Ort, aber im Umkreis von 3 km: „Schauer in der Nähe ab ca. 15:50“;
   Spuren unter „leicht“ (z. B. Niesel): „Vereinzelte Tropfen möglich“. Stunden, die Radar/Nowcast abdecken,
-  zeigen auch im Stundenstreifen und Lauf-Check die Radar-Menge
+  zeigen auch im Stundenstreifen und Lauf-Check die Radar-Menge.
+  **Niesel-Lage**: Niesel aus tiefen Wolken erfasst das Radar kaum. Sieht es nur schwache Echos an der Messgrenze
+  (oder meldet eine Station bis 40 km Regen) und rechnet das Modell mit Niederschlag, gilt der höhere Wert aus
+  Radar und Modell – Jetzt-Karte „Leichter Nieselregen“, Lauf-Check gelb mit Hinweis
 - **Stündlich** bis 15 Tage: Symbol, Temperaturkurve, Niederschlag (mm), Regenwahrscheinlichkeit, Wind.
   Eine grüne Linie markiert, wo von ICON-D2 auf ECMWF umgeschaltet wird.
 - **15 Tage**: Min/Max mit Temperaturbalken, Niederschlag, Wahrscheinlichkeit.
