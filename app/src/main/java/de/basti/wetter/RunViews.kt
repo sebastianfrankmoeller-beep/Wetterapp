@@ -39,9 +39,10 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
     private val yDrop = 52 * d
     private val yTemp = 84 * d
     private val yWind = 106 * d
-    private val yTime = 128 * d
+    private val yGust = 124 * d
+    private val yTime = 146 * d
 
-    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (136 * d).toInt())
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (154 * d).toInt())
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -79,7 +80,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
             if (sel == i) {
                 paint.color = p.surfaceHi
-                c.drawRoundRect(RectF(x0 + 2 * d, yBar + barH + 4 * d, x0 + cw - 2 * d, yWind + 8 * d), 10 * d, 10 * d, paint)
+                c.drawRoundRect(RectF(x0 + 2 * d, yBar + barH + 4 * d, x0 + cw - 2 * d, yGust + 6 * d), 10 * d, 10 * d, paint)
             }
 
             // Regen: Tropfen, Füllung nach Stärke
@@ -92,13 +93,17 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             c.drawText(Fmt.temp(s.feels), cx, yTemp, text)
 
             // Wind
+            // Mittelwind mit Richtung, darunter die Böen (ab 45 km/h orange – danach richtet sich die Ampel)
             val strong = !s.gust.isNaN() && s.gust >= 45
-            WeatherIcons.windArrow(c, cx - 10 * d, yWind - 4 * d, 10 * d, s.windDir, if (strong) p.warn else p.muted)
+            WeatherIcons.windArrow(c, cx - 10 * d, yWind - 4 * d, 10 * d, s.windDir, p.muted)
             text.textSize = 11 * d
-            text.color = if (strong) p.warn else p.muted
+            text.color = p.muted
             text.textAlign = Paint.Align.LEFT
             c.drawText(Fmt.kmh(s.wind), cx - 3 * d, yWind, text)
             text.textAlign = Paint.Align.CENTER
+            text.textSize = 10.5f * d
+            text.color = if (strong) p.warn else Ui.withAlpha(p.muted, 200)
+            c.drawText("B ${Fmt.kmh(s.gust)}", cx, yGust, text)
         }
 
         // Zeitachse alle 30 Minuten

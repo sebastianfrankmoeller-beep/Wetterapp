@@ -121,16 +121,20 @@ object RunCheck {
         val worst = slots.filter { it.level == level && it.reason != null }
         val first = worst.firstOrNull()
         fun minutesFrom(t: Long) = ((t - now) / 60).toInt().coerceAtLeast(0)
+        // Bei Böen den Höchstwert nennen statt nur "böiger Wind"
+        fun why(sl: Slot): String = if (sl.reason == "böiger Wind" || sl.reason == "Sturmböen")
+            "${if (sl.reason == "Sturmböen") "Sturmböen" else "Böen"} bis ${worst.maxOf { if (it.gust.isNaN()) 0.0 else it.gust }.roundToInt()} km/h"
+            else sl.reason!!
         val reason: String = when {
             warnRed != null -> "Amtliche Warnung: " + titleCase(warnRed.event)
             first == null && relevant.isNotEmpty() -> "Warnung: " + titleCase(relevant.first().event)
             first == null -> "Trocken und angenehm"
             first === slots.first() -> {
                 val endIdx = slots.indexOfFirst { it.level < level }
-                if (endIdx < 0) "${cap(first.reason!!)} die ganzen 2 Stunden"
-                else "${cap(first.reason!!)} bis ca. ${f.hhmm(slots[endIdx].t)}"
+                if (endIdx < 0) "${cap(why(first))} die ganzen 2 Stunden"
+                else "${cap(why(first))} bis ca. ${f.hhmm(slots[endIdx].t)}"
             }
-            else -> "${cap(first.reason!!)} ab ca. ${f.hhmm(first.t)} (in ${minutesFrom(first.t)} Min.)"
+            else -> "${cap(why(first))} ab ca. ${f.hhmm(first.t)} (in ${minutesFrom(first.t)} Min.)"
         }
         val headline = when (level) {
             GREEN -> "Gute Bedingungen"
@@ -179,30 +183,73 @@ object RunCheck {
     }
 
     /** Sucht in den nächsten 12 Stunden ein 2-Stunden-Fenster mit besserer Bewertung (tagsüber bevorzugt). */
+    /** Kennzahlen eines 2-Stunden-Fensters für den Vergleich "jetzt" gegen "später". */
+    private class Stats(slots: List<Slot>) {
+        val level = slots.maxOf { it.level }
+        val rainSlots = slots.count { it.rain >= 0.3 }                 // Viertelstunden mit Regen
+        val rainMax = slots.maxOf { it.rain }
+        val gustMax = slots.map { it.gust }.filter { !it.isNaN() }.maxOrNull() ?: 0.0
+        val thunder = slots.maxOf { it.thunder }
+        val feelsMax = slots.map { it.feels }.filter { !it.isNaN() }.maxOrNull() ?: Double.NaN
+        val feelsMin = slots.map { it.feels }.filter { !it.isNaN() }.minOrNull() ?: Double.NaN
+        val ice = slots.any { it.reason == "Glätte möglich" || it.reason == "Glatteis" }
+        val dayAll = slots.all { it.isDay }
+    }
+
     /**
-     * Sucht in den nächsten 12 Stunden ein 2-Stunden-Fenster, das wirklich besser ist –
-     * mit denselben 15-Minuten-Daten wie der Verlauf und frühestens 30 Minuten nach jetzt.
+     * Was wäre an einem späteren Fenster SPÜRBAR besser? Liefert die Verbesserungen als Text
+     * oder null, wenn es nur knapp anders ist bzw. dafür etwas anderes schlechter wird.
+     */
+    private fun improvements(now: Stats, later: Stats): List<String>? {
+        // Nichts darf deutlich schlechter werden
+        if (later.level > now.level) return null
+        if (later.thunder > now.thunder || (later.ice && !now.ice)) return null
+        if (later.rainSlots > now.rainSlots + 1 || later.gustMax > now.gustMax + 8) return null
+        val out = ArrayList<String>()
+        if (now.thunder >= 1 && later.thunder == 0) out.add("kein Gewitter mehr")
+        if (now.ice && !later.ice) out.add("keine Glätte")
+        if (now.rainSlots >= 2) {
+            when {
+                later.rainSlots == 0 -> out.add("trocken")
+                later.rainSlots <= now.rainSlots - 3 -> out.add("deutlich weniger Regen")
+                RainRate.level(later.rainMax) < RainRate.level(now.rainMax) && RainRate.level(now.rainMax) >= 2 ->
+                    out.add("nur noch ${RainRate.NAMES[RainRate.level(later.rainMax)]}er Regen")
+            }
+        }
+        if (now.gustMax >= 45 && later.gustMax <= now.gustMax - 10) out.add("Böen nur noch bis ${later.gustMax.roundToInt()} km/h")
+        if (!now.feelsMax.isNaN() && now.feelsMax >= 26 && later.feelsMax <= now.feelsMax - 4) out.add("kühler (${Fmt.temp(later.feelsMax)} gefühlt)")
+        if (!now.feelsMin.isNaN() && now.feelsMin <= -8 && later.feelsMin >= now.feelsMin + 4) out.add("milder (${Fmt.temp(later.feelsMin)} gefühlt)")
+        return out.ifEmpty { null }
+    }
+
+    /**
+     * Sucht in den nächsten 12 Stunden ein 2-Stunden-Fenster, das wirklich besser ist – für jedes Wetter
+     * (Regen, Böen, Gewitter, Glätte, Hitze, Kälte), mit denselben 15-Minuten-Daten wie der Verlauf.
+     * Bevorzugt wird das früheste Fenster mit guten Bedingungen, sonst das früheste spürbar bessere.
      */
     private fun betterWindow(f: Forecast, start: Long, current: Int): String? {
         val lastHour = f.hours.lastOrNull()?.t ?: return null
-        var best: Pair<Long, Int>? = null
+        val nowStats = Stats(buildSlots(f, start, 8))
+        var firstBetter: Pair<Long, List<String>>? = null
+        var firstGreen: Pair<Long, List<String>>? = null
         var s = start + 1800
-        // auf halbe Stunden runden, damit die Uhrzeiten glatt sind
         s += (1800 - s % 1800) % 1800
         while (s < start + 12 * 3600 && s + 7200 <= lastHour + 3600) {
-            val slots = buildSlots(f, s, 8)
-            val lvl = slots.maxOf { it.level }
-            val night = !slots.first().isDay && !slots.last().isDay
-            if (lvl < current && !night) {
-                if (best == null || lvl < best.second) best = s to lvl
-                if (lvl == GREEN) break
+            val st = Stats(buildSlots(f, s, 8))
+            // nachts nur vorschlagen, wenn es jetzt auch dunkel ist
+            if (st.dayAll || !nowStats.dayAll) {
+                val imp = improvements(nowStats, st)
+                if (imp != null) {
+                    if (firstBetter == null) firstBetter = s to imp
+                    if (st.level == GREEN) { firstGreen = s to imp; break }
+                }
             }
             s += 1800
         }
-        val b = best ?: return null
-        val kind = if (b.second == GREEN) "gute Bedingungen" else "etwas besser"
-        val day = if (f.cal(b.first).get(java.util.Calendar.DAY_OF_YEAR) != f.cal(start).get(java.util.Calendar.DAY_OF_YEAR)) "morgen " else ""
-        return "Besser: $day${f.hhmm(b.first)}–${f.hhmm(b.first + 7200)} · $kind"
+        // Lieber ein gutes Fenster, wenn es höchstens 3 Stunden nach dem ersten besseren liegt
+        val pick = firstGreen?.takeIf { g -> firstBetter == null || g.first - firstBetter!!.first <= 3 * 3600 } ?: firstBetter ?: return null
+        val day = if (f.cal(pick.first).get(java.util.Calendar.DAY_OF_YEAR) != f.cal(start).get(java.util.Calendar.DAY_OF_YEAR)) "morgen " else ""
+        return "Besser $day${f.hhmm(pick.first)}–${f.hhmm(pick.first + 7200)}: ${pick.second.joinToString(", ")}"
     }
 
     /**

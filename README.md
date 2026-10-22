@@ -41,11 +41,12 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer für die **nächsten 2 Stunden**:
 
 - **Ampel** mit Urteil und Hauptgrund (z. B. „Leichter Regen ab ca. 12:30“)
-- **Verlauf in 15-Minuten-Schritten**: Ampelfarbe, Regen-Tropfen, gefühlte Temperatur, Wind – antippen für Details
+- **Verlauf in 15-Minuten-Schritten**: Ampelfarbe, Regen-Tropfen, gefühlte Temperatur, Wind und Böen – antippen für Details
 - **Kleidung** nach gefühlter Temperatur und **Läufertyp** (Läuft warm / Normal / Friert schnell –
   in den Einstellungen oder per Pille in der Karte)
 - **Hinweise**: Gegenwind-Tipp, Gewitter, Glätte, Dunkelheit, Hitze, UV, Warnungen
-- **Besseres Zeitfenster**, wenn die nächsten 2 Stunden ungünstig sind
+- **Besseres Zeitfenster**, wenn die nächsten 2 Stunden ungünstig sind – nur bei spürbarer Verbesserung
+  (z. B. trocken, Böen ≥ 10 km/h schwächer, kein Gewitter mehr), mit Grund: „Besser 14:00–16:00: Böen nur noch bis 32 km/h“
 - Auch als Widget-Inhalt **„Lauf“**
 
 ## Fahrmodus
