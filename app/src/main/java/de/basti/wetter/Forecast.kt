@@ -33,8 +33,16 @@ class Hour(
     val lpi: Double,          // Blitz-Potenzial (ICON-D2), J/kg
     val flashes: Double,      // Blitzdichte (ECMWF), Blitze je km² und Tag
     val snowDepth: Double,    // Schneehöhe in cm
-    val snowLine: Double      // Schneefallgrenze in m (nur ICON-D2)
+    val snowLine: Double,     // Schneefallgrenze in m (nur ICON-D2)
+    val cloudLow: Double = Double.NaN,   // Bewölkung tief %
+    val cloudMid: Double = Double.NaN,   // Bewölkung mittel %
+    val cloudHigh: Double = Double.NaN   // Bewölkung hoch % (oft dünne Schleierwolken)
 ) {
+    /** Wirksame Bewölkung in %: hohe Schleierwolken zählen nur halb. */
+    val cloudEff: Double by lazy { Sky.effective(cloud, cloudLow, cloudMid, cloudHigh) }
+    /** true, wenn die Bewölkungsstufe nur durch hohe Wolken angehoben wird ("… mit Aufheiterungen"). */
+    val thinHigh: Boolean by lazy { Sky.thinHigh(cloud, cloudLow, cloudMid, cloudHigh) }
+
     /** Gewitterrisiko: 0 = keins, 1 = gering, 2 = mäßig, 3 = hoch. */
     val thunder: Int by lazy { Thunder.level(this) }
 }
@@ -101,7 +109,8 @@ class Forecast(
     val nowcastSnow: Boolean = false,  // Niederschlag in den nächsten Stunden überwiegend als Schnee
     val uv: Map<Long, Double> = emptyMap(),  // UV-Index je Stunde (nächste 24 h)
     val nowcastRadarUntil: Long = 0,   // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
-    val elevation: Double = Double.NaN // Höhe des Ortes in m
+    val elevation: Double = Double.NaN, // Höhe des Ortes in m
+    val obs: Observation.Obs? = null   // Messwerte der nächsten DWD-Station (Bright Sky)
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -195,7 +204,7 @@ object Net {
 object WeatherApi {
     private const val BASE = "https://api.open-meteo.com/v1/forecast"
     private const val VARS = "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,snowfall," +
-        "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day,pressure_msl,cape,snow_depth"
+        "weather_code,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day,pressure_msl,cape,snow_depth"
 
     private fun loc(p: Place) = "latitude=%.4f&longitude=%.4f".format(Locale.US, p.lat, p.lon)
 
@@ -214,17 +223,20 @@ object WeatherApi {
         var d2: String? = null
         var uv: String? = null
         var radar: String? = null
+        var obs: String? = null
         val t = Thread { d2 = runCatching { Net.get(d2Url) }.getOrNull() }
         val tu = Thread { uv = runCatching { Net.get(uvUrl, 8000) }.getOrNull() }
         val tr = Thread { radar = RadarNowcast.fetchRaw(p) }
-        t.start(); tu.start(); tr.start()
+        val to = Thread { obs = Observation.fetchRaw(p) }
+        t.start(); tu.start(); tr.start(); to.start()
         val ec = Net.get(ecUrl)
-        t.join(20000); tu.join(10000); tr.join(12000)
+        t.join(20000); tu.join(10000); tr.join(12000); to.join(10000)
         return JSONObject()
             .put("ec", JSONObject(ec))
             .put("d2", d2?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("uv", uv?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("radar", radar?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
+            .put("obs", obs?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("at", System.currentTimeMillis())
             .toString()
     }
@@ -271,6 +283,7 @@ object WeatherApi {
         val eSnow = e.a("snowfall"); val eCode = e.a("weather_code"); val eCloud = e.a("cloud_cover")
         val eWind = e.a("wind_speed_10m"); val eDir = e.a("wind_direction_10m"); val eGust = e.a("wind_gusts_10m")
         val eDay = e.a("is_day"); val ePres = e.a("pressure_msl"); val eProb = e.a("precipitation_probability")
+        val eLow = e.a("cloud_cover_low"); val eMid = e.a("cloud_cover_mid"); val eHigh = e.a("cloud_cover_high")
         val eCape = e.a("cape"); val eSnowD = e.a("snow_depth"); val eFlash = e.a("lightning_density")
 
         val dTemp = d.a("temperature_2m"); val dFeels = d.a("apparent_temperature")
@@ -278,6 +291,7 @@ object WeatherApi {
         val dSnow = d.a("snowfall"); val dCode = d.a("weather_code"); val dCloud = d.a("cloud_cover")
         val dWind = d.a("wind_speed_10m"); val dDir = d.a("wind_direction_10m"); val dGust = d.a("wind_gusts_10m")
         val dDay = d.a("is_day"); val dPres = d.a("pressure_msl")
+        val dLow = d.a("cloud_cover_low"); val dMid = d.a("cloud_cover_mid"); val dHigh = d.a("cloud_cover_high")
         val dCape = d.a("cape"); val dSnowD = d.a("snow_depth"); val dLpi = d.a("lightning_potential"); val dLine = d.a("snowfall_height")
 
         var hasD2 = false
@@ -296,7 +310,12 @@ object WeatherApi {
             }
             val temp = pick(dTemp, eTemp)
             if (temp.isNaN()) continue
-            val code = pick(dCode, eCode)
+            val rawCode = pick(dCode, eCode).let { if (it.isNaN()) 3 else it.toInt() }
+            val cloud = pick(dCloud, eCloud)
+            val cLow = pick(dLow, eLow); val cMid = pick(dMid, eMid); val cHigh = pick(dHigh, eHigh)
+            // Ohne Niederschlag/Nebel: Zustand aus der Bewölkung in Achteln (Schleierwolken halb gewichtet)
+            val code = if (rawCode in 0..3 && !cloud.isNaN())
+                Sky.code(Sky.octas(Sky.effective(cloud, cLow, cMid, cHigh))) else rawCode
             hours.add(
                 Hour(
                     t = t,
@@ -305,8 +324,8 @@ object WeatherApi {
                     humidity = pick(dHum, eHum),
                     precip = pick(dPr, ePr).let { if (it.isNaN()) 0.0 else it },
                     snow = pick(dSnow, eSnow).let { if (it.isNaN()) 0.0 else it },
-                    code = if (code.isNaN()) 3 else code.toInt(),
-                    cloud = pick(dCloud, eCloud),
+                    code = code,
+                    cloud = cloud,
                     wind = pick(dWind, eWind),
                     windDir = pick(dDir, eDir),
                     gust = pick(dGust, eGust),
@@ -318,7 +337,8 @@ object WeatherApi {
                     lpi = if (useD2) dLpi.d(j!!) else Double.NaN,
                     flashes = if (useD2) Double.NaN else eFlash.d(i),
                     snowDepth = pick(dSnowD, eSnowD).let { if (it.isNaN()) Double.NaN else it * 100 },
-                    snowLine = if (j != null) dLine.d(j) else Double.NaN
+                    snowLine = if (j != null) dLine.d(j) else Double.NaN,
+                    cloudLow = cLow, cloudMid = cMid, cloudHigh = cHigh
                 )
             )
         }
@@ -375,7 +395,8 @@ object WeatherApi {
             val tt = u.optJSONArray("time"); val vv = u.optJSONArray("uv_index")
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
-        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN))
+        return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
+            root.optJSONObject("obs")?.let { Observation.parse(it) })
     }
 
     private fun dayStart(t: Long, offset: Int): Long {
@@ -447,14 +468,9 @@ object WeatherApi {
                 }
             }
         }
-        val cloud = hs.map { it.cloud }.filter { !it.isNaN() }.average().let { if (it.isNaN()) 50.0 else it }
+        val cloud = hs.map { it.cloudEff }.filter { !it.isNaN() }.average().let { if (it.isNaN()) 50.0 else it }
         if (codes.count { it == 45 || it == 48 } * 2 > hs.size) return 45
-        return when {
-            cloud < 20 -> 0
-            cloud < 45 -> 1
-            cloud < 75 -> 2
-            else -> 3
-        }
+        return Sky.code(Sky.octas(cloud))
     }
 
     private fun intensity(code: Int): Int = when (code) {
@@ -500,9 +516,10 @@ object Fmt {
 
     fun code(code: Int): String = when (code) {
         0 -> "Klar"
-        1 -> "Überwiegend sonnig"
-        2 -> "Teils bewölkt"
+        1 -> "Sonnig"
+        2 -> "Wolkig"
         3 -> "Bedeckt"
+        4 -> "Stark bewölkt"
         45 -> "Nebel"
         48 -> "Nebel mit Reif"
         51 -> "Leichter Nieselregen"
@@ -513,6 +530,7 @@ object Fmt {
         63 -> "Regen"
         65 -> "Starker Regen"
         66, 67 -> "Gefrierender Regen"
+        68 -> "Schneeregen"
         71 -> "Leichter Schneefall"
         73 -> "Schneefall"
         75 -> "Starker Schneefall"
@@ -556,7 +574,7 @@ object RadarNowcast {
         return runCatching { Net.get(url, 10000) }.getOrNull()
     }
 
-    private fun parseIso(s: String): Long? {
+    fun parseIso(s: String): Long? {
         val v = s.replace("Z", "+00:00")
         for (pattern in listOf("yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")) {
             val r = runCatching { SimpleDateFormat(pattern, Locale.US).parse(v)?.time }.getOrNull()

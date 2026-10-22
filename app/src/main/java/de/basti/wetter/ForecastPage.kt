@@ -42,6 +42,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         fun onSelectPlace(id: String)
         fun onLongPressPlace(id: String)
         fun onWarningClick(w: Warning)
+        fun onInfo(title: String, msg: String)
     }
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -61,6 +62,9 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val bigIcon = IconView(ctx, p, 92)
     private val desc = Ui.tv(ctx, "", 18f, p.text, true)
     private val feels = Ui.tv(ctx, "", 14f, p.muted)
+    private val cloudLine = Ui.tv(ctx, "", 14f, p.muted)
+    private val layersLine = Ui.tv(ctx, "", 12.5f, p.muted).apply { visibility = View.GONE; setLineSpacing(0f, 1.2f) }
+    private val sourceLine = Ui.tv(ctx, "", 12f, p.muted)
     private val hints = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
     private val statusActions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
     private val warnBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -135,6 +139,9 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
                     addView(bigTemp)
                     addView(desc, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
                     addView(feels, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(6) })
+                    addView(cloudLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                    addView(layersLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(3) })
+                    addView(sourceLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(6) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
                 addView(bigIcon)
             })
@@ -142,6 +149,12 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             addView(hints, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         add(hero, 14)
+        // Bewölkung antippen: Schichten tief/mittel/hoch ein- und ausblenden
+        cloudLine.setOnClickListener {
+            if (layersLine.text.isNotEmpty())
+                layersLine.visibility = if (layersLine.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        hourly.onHourClick = { i -> hourInfo(i) }
 
         // ------------------------------------------------------------ Lauf-Check
         add(runSection, 8)
@@ -277,18 +290,31 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     // ------------------------------------------------------------- Inhalt
 
     fun bind(f: Forecast) {
-        val now = f.now ?: return
+        val h0 = f.now ?: return
+        val now = f.current() ?: return
         bigTemp.text = Fmt.temp(now.temp)
         bigIcon.set(now.code, now.isDay)
-        desc.text = Fmt.codeAt(now.code, now.isDay)
+        desc.text = now.text
         val today = f.days.firstOrNull()
         val hiLo = if (today != null) "  ·  ↑ ${Fmt.temp(today.max)}  ↓ ${Fmt.temp(today.min)}" else ""
         feels.text = "Gefühlt ${Fmt.temp(now.feels)}$hiLo"
+        if (now.cloud.isNaN()) cloudLine.visibility = View.GONE else {
+            cloudLine.visibility = View.VISIBLE
+            val src = if (now.cloudMeasured) "gemessen" else "Modell"
+            cloudLine.text = "Bewölkung ${Sky.label(now.cloud)} · $src" + if (now.layers != null) "  ›" else ""
+        }
+        layersLine.text = now.layers?.let { l ->
+            val note = if (h0.thinHigh || (!h0.cloudHigh.isNaN() && h0.cloudHigh >= 30)) "\nHohe Schleierwolken zählen halb." else ""
+            "Schichten (Modell): $l$note"
+        } ?: ""
+        if (layersLine.text.isEmpty()) layersLine.visibility = View.GONE
+        sourceLine.text = now.source
+        sourceLine.setTextColor(if (now.obs != null) p.accent else p.muted)
 
         stats.removeAllViews()
         // Liegt Schnee, ersetzt die Schneehöhe den Luftdruck
-        val lastTile = if (!now.snowDepth.isNaN() && now.snowDepth >= 1)
-            statTile("Schneehöhe", "${now.snowDepth.roundToInt()} cm")
+        val lastTile = if (!h0.snowDepth.isNaN() && h0.snowDepth >= 1)
+            statTile("Schneehöhe", "${h0.snowDepth.roundToInt()} cm")
         else statTile("Luftdruck", if (now.pressure.isNaN()) "–" else "${now.pressure.roundToInt()}", "hPa")
         val tiles = listOf(
             statTile("Wind", "${Fmt.kmh(now.wind)} km/h", Fmt.dir(now.windDir)),
@@ -348,6 +374,34 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
 
         val models = if (f.hasD2) "DWD ICON-D2 (2 km) bis 48 h, danach ECMWF IFS (9 km)" else "ECMWF IFS (9 km)"
         footer.text = "Modelle: $models\nDaten: Open-Meteo · Stand ${f.hhmmLocal(f.fetchedAt)}"
+    }
+
+    /** Details einer Stunde im Stundenstreifen (antippen). */
+    private fun hourInfo(i: Int) {
+        val f = lastForecast ?: return
+        val h = f.hours.getOrNull(i) ?: return
+        val now = if (i == 0) f.current() else null
+        val title = (if (i == 0) "Jetzt" else "${f.weekdayShort(h.t)} ${f.hhmm(h.t)} Uhr")
+        val msg = buildString {
+            append(now?.text ?: Sky.describe(h.code, h.isDay, h.thinHigh))
+            val cloud = now?.cloud ?: h.cloudEff
+            if (!cloud.isNaN()) {
+                append("\n\nBewölkung ${Sky.label(cloud)}")
+                if (now?.cloudMeasured == true) append(" · gemessen")
+            }
+            Sky.layers(h.cloudLow, h.cloudMid, h.cloudHigh)?.let {
+                append("\nSchichten (Modell): $it")
+                if (h.thinHigh || h.cloudHigh >= 30) append("\nHohe Schleierwolken zählen halb.")
+            }
+            append("\n\nTemperatur ${Fmt.temp(now?.temp ?: h.temp)} (gefühlt ${Fmt.temp(now?.feels ?: h.feels)})")
+            append("\nNiederschlag ${Fmt.mm(h.precip)} mm")
+            if (!h.prob.isNaN()) append(" · Wahrscheinlichkeit ${h.prob.roundToInt()} %")
+            append("\nWind ${Fmt.kmh(now?.wind ?: h.wind)} km/h ${Fmt.dir(now?.windDir ?: h.windDir)}, Böen ${Fmt.kmh(now?.gust ?: h.gust)} km/h")
+            if (h.thunder >= 1) append("\nGewitterrisiko ${Thunder.NAMES[h.thunder]}")
+            append("\n\n")
+            append(now?.source ?: "Modell ${if (h.fromD2) "DWD ICON-D2" else "ECMWF IFS"}")
+        }
+        cb.onInfo(title, msg)
     }
 
     /** Lauf-Check neu berechnen (neue Daten, Warnungen oder Läufertyp). */

@@ -55,9 +55,25 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
 
     var forecast: Forecast? = null
         set(v) { field = v; requestLayout(); invalidate() }
+    var onHourClick: ((Int) -> Unit)? = null
 
     private val d = resources.displayMetrics.density
     val colW = 58 * d
+
+    private val gestures = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent) = true
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
+            val i = (e.x / colW).toInt()
+            if (i in 0 until (forecast?.hours?.size ?: 0)) {
+                playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                onHourClick?.invoke(i)
+            }
+            return true
+        }
+    })
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean = gestures.onTouchEvent(event)
     private val h = 230 * d
 
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }

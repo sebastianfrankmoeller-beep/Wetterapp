@@ -10,7 +10,13 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Favoriten mit Schnellzugriff**: Stern antippen → Ort landet in der Leiste oben.
   Langes Drücken auf einen Favoriten: verschieben oder entfernen.
   Erneutes Antippen des gewählten Ortes lädt neu.
-- **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck
+- **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck – **gemessen an der nächsten
+  DWD-Station** (Bright Sky, bis 25 km, Messung max. 90 Min. alt), mit Quelle und Uhrzeit
+  („gemessen · Station Flensburg 11:20“); ohne Station in der Nähe Modellwerte
+- **Bewölkung in Achteln und Prozent** („Bewölkung 5/8 (63 %) · gemessen“). Antippen zeigt die Schichten
+  tief / mittel / hoch (Modell). Zustand nach echten Stufen: 0/8 klar, 1–2 sonnig, 3–5 wolkig,
+  6–7 stark bewölkt, 8/8 bedeckt. Hohe, dünne Schleierwolken zählen nur halb („… mit Aufheiterungen“)
+- **Stundenstreifen antippen**: Details der Stunde (Zustand, Bewölkung mit Schichten, Regen, Wind)
 - **Regen der nächsten 3 Stunden**: die ersten 2 Stunden aus dem **DWD-Radar** (Messung + Radar-Nowcast, 1 km,
   über Bright Sky), danach DWD ICON-D2. „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
   antippen oder ziehen zeigt Uhrzeit und Menge
@@ -82,6 +88,7 @@ Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer
 | Regenwahrscheinlichkeit | ECMWF-Ensemble | – |
 | Radar | DWD Radarverbund + Nowcast; weltweit Rain Viewer | 1 km, 5 min |
 | Regen nächste 2 Std. | DWD-Radar (RADOLAN RV) via Bright Sky | 1 km, 5 min |
+| Jetzt-Werte | DWD-Stationsmessungen (SYNOP) via Bright Sky | nächste Station ≤ 25 km |
 | Windkarte, Böen, Gewitter-Potenzial | DWD ICON (D2/EU/global, nahtlos) | – |
 | Gewitterrisiko Vorhersage | ICON-D2 Blitz-Potenzial, danach ECMWF Blitzdichte/CAPE | – |
 | Warnungen | DWD (amtlich) | Gemeinde |
@@ -121,6 +128,7 @@ Versionsnummer steigt mit jedem Lauf – eine neue APK lässt sich einfach über
 | `MainActivity.kt` | Navigation, Ortswahl, Laden, Favoriten, Einstellungen |
 | `Forecast.kt` | Abruf und Zusammenführung ICON-D2 + ECMWF, Tageswerte, Ortssuche, Texte |
 | `ForecastPage.kt` | Vorhersage-Seite |
+| `Sky.kt` | Bewölkung (Achtel, Stufen, Schleierwolken), Stationsmessungen, Jetzt-Werte |
 | `ForecastViews.kt` | Stundenstreifen, Tagesliste, Regen-Nowcast (selbst gezeichnet) |
 | `WeatherIcons.kt` | Eigene Wettersymbole (App und Widget) |
 | `RadarPage.kt` | DWD-Radar mit Zeitleiste, Warnkarte |

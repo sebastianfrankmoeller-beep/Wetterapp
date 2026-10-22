@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
+import de.basti.wetter.current
 import android.text.TextUtils
 import de.basti.wetter.Fmt
 import de.basti.wetter.Forecast
@@ -201,7 +202,7 @@ object WidgetRenderer {
         c: Canvas, f: Forecast, name: String, isLoc: Boolean, x: Float, y: Float, w: Float, h: Float,
         d: Float, p: Ui.Palette, iconP: Ui.Palette, text: TextPaint, big: Boolean
     ) {
-        val now = f.now ?: return
+        val now = f.current() ?: return
         val today = f.days.firstOrNull()
         val iconSize = min(h, if (big) 64 * d else 48 * d)
         val cy = y + h / 2
@@ -230,7 +231,7 @@ object WidgetRenderer {
             text.textSize = 12 * d
             text.color = p.muted
             val hl = if (today != null) "  ↑${Fmt.temp(today.max)} ↓${Fmt.temp(today.min)}" else ""
-            val line2 = Fmt.codeAt(now.code, now.isDay) + hl
+            val line2 = now.text + hl
             c.drawText(TextUtils.ellipsize(line2, text, avail, TextUtils.TruncateAt.END).toString(), ix, cy + 13 * d, text)
             if (big && h > 90 * d) {
                 val line3 = "Wind ${Fmt.kmh(now.wind)} km/h ${Fmt.dir(now.windDir)}  ·  Gefühlt ${Fmt.temp(now.feels)}"

@@ -23,14 +23,14 @@ object WeatherIcons {
         0 -> Kind.CLEAR
         1 -> Kind.FEW
         2 -> Kind.PARTLY
-        3 -> Kind.CLOUDY
+        3, 4 -> Kind.CLOUDY
         45, 48 -> Kind.FOG
         51, 53, 55 -> Kind.DRIZZLE
         56, 57, 66, 67 -> Kind.FREEZING
         61, 63 -> Kind.RAIN
         65 -> Kind.HEAVY_RAIN
         71, 73, 75 -> Kind.SNOW
-        77 -> Kind.SLEET
+        68, 77 -> Kind.SLEET
         80, 81, 82 -> Kind.SHOWER
         85, 86 -> Kind.SNOW_SHOWER
         95, 96, 99 -> Kind.THUNDER

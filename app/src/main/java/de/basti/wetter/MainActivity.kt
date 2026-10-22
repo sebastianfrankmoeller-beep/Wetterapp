@@ -395,6 +395,14 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         startActivity(Intent(this, SettingsActivity::class.java))
     }
 
+    override fun onInfo(title: String, msg: String) {
+        AlertDialog.Builder(this, dialogTheme())
+            .setTitle(title)
+            .setMessage(msg)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
     override fun onWarningClick(w: Warning) {
         val msg = buildString {
             append(w.timeRange())
