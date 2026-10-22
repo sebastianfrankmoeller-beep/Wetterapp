@@ -478,8 +478,30 @@ fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, Stri
     val wet = { v: Double -> v * 4 >= 0.1 }        // ab 0,1 mm/h
     val hours = ((nc.last().first - nc.first().first) / 3600.0 + 0.25).roundToInt()
     val firstWet = nc.indexOfFirst { wet(it.second) }
-    if (firstWet < 0) return "Kein $what in den nächsten $hours Std." to ""
     val now = System.currentTimeMillis() / 1000
+    if (firstWet < 0) {
+        // Kein Regen genau am Ort – aber vielleicht ein Schauer knapp daneben oder nur einzelne Tropfen
+        fun phase(start: Int, test: (Int) -> Boolean): String {
+            var end = start
+            while (end + 1 < nc.size && test(end + 1)) end++
+            return if (end + 1 < nc.size) "bis ca. ${f.hhmm(nc[end + 1].first)}" else "hält an"
+        }
+        val nearWet = { i: Int -> (f.nowcastNear[nc[i].first] ?: 0.0) * 4 >= 0.3 }
+        val iNear = nc.indices.firstOrNull { nearWet(it) }
+        if (iNear != null) {
+            val head = (if (f.nowcastSnow) "Schneeschauer" else "Schauer") + " in der Nähe" +
+                if (iNear == 0 || nc[iNear].first <= now) "" else " ab ca. ${f.hhmm(nc[iNear].first)}"
+            return head to "knapp vorbei möglich  ·  ${phase(iNear, nearWet)}"
+        }
+        val trace = { i: Int -> nc[i].second * 4 >= 0.02 }
+        val iTrace = nc.indices.firstOrNull { trace(it) }
+        if (iTrace != null) {
+            val head = "Vereinzelte ${if (f.nowcastSnow) "Flocken" else "Tropfen"} möglich" +
+                if (iTrace == 0 || nc[iTrace].first <= now) "" else " ab ca. ${f.hhmm(nc[iTrace].first)}"
+            return head to "sehr leicht  ·  ${phase(iTrace, trace)}"
+        }
+        return "Kein $what in den nächsten $hours Std." to ""
+    }
     fun mins(t: Long) = ((t - now) / 60).toInt().coerceAtLeast(0)
     fun rel(t: Long): String {
         val m = mins(t)

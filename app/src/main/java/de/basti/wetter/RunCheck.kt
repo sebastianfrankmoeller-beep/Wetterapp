@@ -32,7 +32,8 @@ object RunCheck {
         val thunder: Int,
         val isDay: Boolean,
         val level: Int,
-        val reason: String?    // Hauptgrund für Gelb/Rot
+        val reason: String?,   // Hauptgrund für Gelb/Rot
+        val near: Boolean = false  // am Ort trocken, aber Schauer im Umkreis von 3 km
     )
 
     class Result(
@@ -95,8 +96,9 @@ object RunCheck {
             val feels = interp(hs, t) { it.feels }
             val gust = interp(hs, t) { it.gust }
             val (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0)
+            val near = ncKey != null && rain < 0.1 && (f.nowcastNear[ncKey] ?: 0.0) * 4 >= 0.3
             Slot(t, rain, snowy, temp, feels, interp(hs, t) { it.wind }, gust, h?.windDir ?: Double.NaN,
-                h?.thunder ?: 0, h?.isDay ?: true, lvl, why)
+                h?.thunder ?: 0, h?.isDay ?: true, lvl, why, near)
         }
     }
 
@@ -159,6 +161,16 @@ object RunCheck {
         val dir = slots[slotsN / 2].windDir
         if (wind >= 15 && !dir.isNaN()) {
             hints.add(GlyphView.Kind.WIND to "Wind ${wind.roundToInt()} km/h aus ${Fmt.dir(dir)} – starte gegen den Wind, zurück mit Rückenwind")
+        }
+        if (!anyRain) {
+            val nearSlot = slots.firstOrNull { it.near }
+            if (nearSlot != null) hints.add(GlyphView.Kind.RAIN to
+                "${if (nearSlot.snowy) "Schneeschauer" else "Schauer"} in der Nähe möglich" +
+                if (nearSlot === slots.first()) "" else " ab ca. ${f.hhmm(nearSlot.t)}")
+            else slots.firstOrNull { it.rain >= 0.02 }?.let { tr ->
+                hints.add(GlyphView.Kind.RAIN to "Vereinzelte ${if (tr.snowy) "Flocken" else "Tropfen"} möglich" +
+                    if (tr === slots.first()) "" else " ab ca. ${f.hhmm(tr.t)}")
+            }
         }
         if (slots.any { it.thunder >= 1 } && level < RED) hints.add(GlyphView.Kind.BOLT to "Gewitterrisiko – Himmel im Blick behalten")
         if (slots.any { !it.temp.isNaN() && it.temp <= 1.0 } && (slots.any { it.rain >= 0.05 } || hs.take(6).any { it.precip >= 0.1 }))

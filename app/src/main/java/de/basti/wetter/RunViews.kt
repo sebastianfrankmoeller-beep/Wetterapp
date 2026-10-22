@@ -84,7 +84,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             }
 
             // Regen: Tropfen, Füllung nach Stärke
-            drawDrop(c, cx, yDrop, 9 * d, s.rain, s.snowy)
+            drawDrop(c, cx, yDrop, 9 * d, s.rain, s.snowy, s.near)
 
             // Gefühlte Temperatur
             text.textSize = 14 * d
@@ -121,7 +121,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         // Detail des angetippten Abschnitts
         if (sel in 0 until n) {
             val s = r.slots[sel]
-            val rain = if (s.rain < 0.1) "trocken" else "${Fmt.mm(s.rain)} mm/h ${if (s.snowy) "Schnee" else "Regen"}"
+            val rain = if (s.rain < 0.1) (if (s.near) "Schauer in der Nähe" else if (s.rain >= 0.02) "einzelne Tropfen" else "trocken") else "${Fmt.mm(s.rain)} mm/h ${if (s.snowy) "Schnee" else "Regen"}"
             val gust = if (s.gust.isNaN()) "" else " · Böen ${s.gust.roundToInt()}"
             val t = "${f?.hhmm(s.t) ?: ""} · $rain · ${Fmt.temp(s.temp)} (gef. ${Fmt.temp(s.feels)})$gust"
             text.textSize = 12 * d
@@ -134,7 +134,7 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         }
     }
 
-    private fun drawDrop(c: Canvas, cx: Float, cy: Float, r: Float, mmh: Double, snowy: Boolean) {
+    private fun drawDrop(c: Canvas, cx: Float, cy: Float, r: Float, mmh: Double, snowy: Boolean, near: Boolean = false) {
         drop.reset()
         drop.moveTo(cx, cy - r * 1.55f)
         drop.cubicTo(cx + r * 0.35f, cy - r * 0.85f, cx + r, cy - r * 0.35f, cx + r, cy + r * 0.15f)
@@ -145,9 +145,17 @@ class RunStripView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         // Umriss immer, Füllung je nach Stärke
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 1.4f * d
-        paint.color = if (mmh < 0.1) Ui.withAlpha(p.muted, 110) else col
+        paint.color = if (mmh < 0.1 && !near) Ui.withAlpha(p.muted, 110) else col
         c.drawPath(drop, paint)
         paint.style = Paint.Style.FILL
+        if (mmh < 0.1 && near) {
+            // Schauer in der Nähe: halb gefüllt, blasser
+            c.save()
+            c.clipRect(cx - r - 2, cy - r * 0.2f, cx + r + 2, cy + r * 1.2f)
+            paint.color = Ui.withAlpha(col, 120)
+            c.drawPath(drop, paint)
+            c.restore()
+        }
         if (mmh >= 0.1) {
             val k = min(1.0, RainRate.height(mmh).toDouble() * 1.4)
             val top = cy + r * 1.15f - (r * 2.7f * k.toFloat())
@@ -241,6 +249,7 @@ class RunCard(ctx: Context, private val p: Ui.Palette, private val onTypeChange:
                 GlyphView.Kind.WARNING -> p.warn
                 GlyphView.Kind.SUN -> p.sun
                 GlyphView.Kind.SNOW -> p.snow
+                GlyphView.Kind.RAIN -> p.rain
                 else -> p.muted
             }
             hints.addView(LinearLayout(context).apply {

@@ -267,7 +267,8 @@ object WidgetRenderer {
         if (upcoming.size < 4) return null
         val (head, sub) = nowcastSummary(f, upcoming)
         // Uhrzeiten statt "in 40 Min." – das Widget wird nur etwa alle 30 Minuten neu gezeichnet
-        return if (sub.isEmpty()) head else "${if (f.nowcastSnow) "Schnee" else "Regen"}  ·  $sub"
+        val what = if (f.nowcastSnow) "Schnee" else "Regen"
+        return if (sub.isEmpty() || !head.startsWith("$what ")) head else "$what  ·  $sub"
     }
 
     private fun drawRainLine(c: Canvas, line: String, x: Float, baseline: Float, w: Float, d: Float, p: Ui.Palette, text: TextPaint) {

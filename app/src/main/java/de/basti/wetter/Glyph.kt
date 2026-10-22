@@ -15,7 +15,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp: Int = 22) : View(ctx) {
 
-    enum class Kind { SHIRT, MOON, SUN, RUN, CAR, SPEAKER, BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
+    enum class Kind { SHIRT, MOON, SUN, RUN, CAR, SPEAKER, BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, RAIN, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
 
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -178,6 +178,15 @@ class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp
                     path.close()
                     paint.style = Paint.Style.FILL_AND_STROKE
                     paint.strokeWidth = 1.2f * u
+                    c.drawPath(path, paint)
+                }
+                Kind.RAIN -> {
+                    // Tropfen
+                    path.moveTo(X(12f), Y(3f))
+                    path.cubicTo(X(14f), Y(7f), X(19f), Y(11.5f), X(19f), Y(15f))
+                    path.arcTo(RectF(X(5f), Y(8f), X(19f), Y(22f)), 0f, 180f)
+                    path.cubicTo(X(5f), Y(11.5f), X(10f), Y(7f), X(12f), Y(3f))
+                    path.close()
                     c.drawPath(path, paint)
                 }
                 Kind.SNOW -> {

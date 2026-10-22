@@ -21,7 +21,10 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Stundenstreifen antippen**: Details der Stunde (Zustand, Bewölkung mit Schichten, Regen, Wind)
 - **Regen der nächsten 3 Stunden**: die ersten 2 Stunden aus dem **DWD-Radar** (Messung + Radar-Nowcast, 1 km,
   über Bright Sky), danach DWD ICON-D2. „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
-  antippen oder ziehen zeigt Uhrzeit und Menge
+  antippen oder ziehen zeigt Uhrzeit und Menge.
+  Regnet es nicht genau am Ort, aber im Umkreis von 3 km: „Schauer in der Nähe ab ca. 15:50“;
+  Spuren unter „leicht“ (z. B. Niesel): „Vereinzelte Tropfen möglich“. Stunden, die Radar/Nowcast abdecken,
+  zeigen auch im Stundenstreifen und Lauf-Check die Radar-Menge
 - **Stündlich** bis 15 Tage: Symbol, Temperaturkurve, Niederschlag (mm), Regenwahrscheinlichkeit, Wind.
   Eine grüne Linie markiert, wo von ICON-D2 auf ECMWF umgeschaltet wird.
 - **15 Tage**: Min/Max mit Temperaturbalken, Niederschlag, Wahrscheinlichkeit.

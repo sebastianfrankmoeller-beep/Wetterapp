@@ -12,6 +12,12 @@ import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/** Kopie einer Stunde mit anderer Niederschlags- und Schneemenge. */
+fun Hour.withPrecip(mm: Double, snowCm: Double) = Hour(
+    t, temp, feels, humidity, mm, snowCm, code, cloud, wind, windDir, gust, isDay, pressure, prob, fromD2,
+    cape, lpi, flashes, snowDepth, snowLine, cloudLow, cloudMid, cloudHigh
+)
+
 /** Eine Stunde Vorhersage. Fehlende Werte sind NaN. */
 class Hour(
     val t: Long,              // Unix-Sekunden
@@ -110,7 +116,8 @@ class Forecast(
     val uv: Map<Long, Double> = emptyMap(),  // UV-Index je Stunde (nächste 24 h)
     val nowcastRadarUntil: Long = 0,   // bis hierhin (Unix-Sek.) stammt der Nowcast aus dem DWD-Radar, danach Modell
     val elevation: Double = Double.NaN, // Höhe des Ortes in m
-    val obs: Observation.Obs? = null   // Messwerte der nächsten DWD-Station (Bright Sky)
+    val obs: Observation.Obs? = null,  // Messwerte der nächsten DWD-Station (Bright Sky)
+    val nowcastNear: Map<Long, Double> = emptyMap() // stärkste Radarzelle im Umkreis von 3 km (mm je 15 Min.)
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -366,7 +373,9 @@ object WeatherApi {
 
         // Gemessener Regen + DWD-Radar-Nowcast ersetzt die Modellwerte, soweit vorhanden (genauer als ICON-D2)
         var radarUntil = 0L
+        var near: Map<Long, Double> = emptyMap()
         root.optJSONObject("radar")?.let { r ->
+            near = RadarNowcast.slots(r, nearMax = true).filter { it.first + 900 > nowSec }.toMap()
             val slots = RadarNowcast.slots(r).filter { it.first + 900 > nowSec }
             if (slots.size >= 4) {
                 radarUntil = slots.last().first + 900
@@ -374,6 +383,22 @@ object WeatherApi {
                 nowcast.clear()
                 nowcast.addAll(slots)
                 nowcast.addAll(model)
+            }
+        }
+
+        // Stunden, die der Kurzfrist-Verlauf (Radar + ICON-D2 15 Min.) ganz abdeckt, übernehmen dessen Menge –
+        // so zeigen Stundenstreifen, Regenkarte und Lauf-Check dasselbe
+        if (radarUntil > 0) {
+            val nc = nowcast.toMap()
+            val slotNow = nowSec - Math.floorMod(nowSec, 900L)
+            for (i in hours.indices) {
+                val h = hours[i]
+                if (h.t + 3600 <= slotNow) continue
+                val from = maxOf(h.t, slotNow)
+                val keys = (from until h.t + 3600 step 900).toList()
+                if (keys.isEmpty() || keys.first() >= radarUntil || keys.any { it !in nc }) continue
+                val mm = keys.sumOf { nc[it]!! }
+                hours[i] = h.withPrecip(mm, if (nowcastSnowy) mm / 0.7 else 0.0)
             }
         }
 
@@ -398,7 +423,7 @@ object WeatherApi {
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
         return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
-            obs)
+            obs, near)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {
@@ -571,7 +596,7 @@ object RadarNowcast {
         val now = System.currentTimeMillis() / 1000
         val from = synchronized(ISO) { ISO.format(java.util.Date((now - 20 * 60) * 1000)) }
         val to = synchronized(ISO) { ISO.format(java.util.Date((now + 135 * 60) * 1000)) }
-        val url = "https://api.brightsky.dev/radar?lat=%.4f&lon=%.4f&distance=2500&format=plain".format(Locale.US, p.lat, p.lon) +
+        val url = "https://api.brightsky.dev/radar?lat=%.4f&lon=%.4f&distance=4000&format=plain".format(Locale.US, p.lat, p.lon) +
             "&date=${Net.enc(from)}&last_date=${Net.enc(to)}"
         return runCatching { Net.get(url, 10000) }.getOrNull()
     }
@@ -585,8 +610,11 @@ object RadarNowcast {
         return null
     }
 
-    /** 15-Minuten-Mengen (Start der Viertelstunde, mm) – Mittel über 3 × 3 km um den Ort. */
-    fun slots(root: JSONObject): List<Pair<Long, Double>> {
+    /**
+     * 15-Minuten-Mengen (Start der Viertelstunde, mm) – Mittel über 3 × 3 km um den Ort,
+     * oder mit [nearMax] die stärkste Zelle im Umkreis von 3 km (Schauer in der Nähe).
+     */
+    fun slots(root: JSONObject, nearMax: Boolean = false): List<Pair<Long, Double>> {
         val frames = root.optJSONArray("radar") ?: return emptyList()
         val pos = root.opt("latlon_position")
         var px = -1; var py = -1
@@ -604,14 +632,17 @@ object RadarNowcast {
             val w = grid.optJSONArray(0)?.length() ?: 0
             val cx = if (px in 0 until w) px else w / 2
             val cy = if (py in 0 until h) py else h / 2
-            var sum = 0.0; var n = 0
-            for (y in cy - 1..cy + 1) for (x in cx - 1..cx + 1) {
+            var sum = 0.0; var n = 0; var mx = 0.0
+            val rad = if (nearMax) 3 else 1
+            for (y in cy - rad..cy + rad) for (x in cx - rad..cx + rad) {
+                if (nearMax && (x - cx) * (x - cx) + (y - cy) * (y - cy) > rad * rad) continue
                 val row = grid.optJSONArray(y) ?: continue
                 if (x < 0 || x >= row.length() || row.isNull(x)) continue
-                sum += row.optDouble(x, 0.0); n++
+                val v = row.optDouble(x, 0.0)
+                sum += v; n++; if (v > mx) mx = v
             }
             if (n == 0) continue
-            val mm = sum / n * 0.01                     // 0,01 mm je 5 Minuten
+            val mm = (if (nearMax) mx else sum / n) * 0.01   // 0,01 mm je 5 Minuten
             val start = t - 300                         // Wert gilt für die 5 Minuten bis t
             val slot = start - Math.floorMod(start, 900L)
             val prev = sums[slot] ?: (0.0 to 0)
