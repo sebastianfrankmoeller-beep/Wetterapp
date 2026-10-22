@@ -51,6 +51,32 @@ object Prefs {
         return Ui.hueOf(a.dark)
     }
 
+    // Frei gewählte Farben als HSV (Farbton 0–360, Sättigung 0–1, Helligkeit 0–1)
+
+    private fun hsvOf(c: Int) = FloatArray(3).also { android.graphics.Color.colorToHSV(c, it) }
+
+    /** Akzentfarbe als HSV; ohne eigenen Wert die bisher gewählte Farbe. */
+    fun accentHsv(ctx: Context): FloatArray {
+        val s = sp(ctx)
+        if (s.contains("st_acc_h")) return floatArrayOf(s.getFloat("st_acc_h", 0f), s.getFloat("st_acc_s", 1f), s.getFloat("st_acc_v", 1f))
+        return hsvOf(Ui.accentFor(accentHue(ctx), true))
+    }
+
+    /** Hintergrundton (dunkle Variante) als HSV; ohne eigenen Wert der bisher gewählte Ton. */
+    fun toneHsv(ctx: Context): FloatArray {
+        val s = sp(ctx)
+        if (s.contains("st_tone_h")) return floatArrayOf(s.getFloat("st_tone_h", 0f), s.getFloat("st_tone_s", 0f), s.getFloat("st_tone_v", 0.05f))
+        return hsvOf(Ui.toneFor(toneValue(ctx)).darkBg)
+    }
+
+    /** HSV speichern; [commit] erhöht die Stil-Version (offene Seiten zeichnen neu), live beim Ziehen nicht. */
+    fun setHsv(ctx: Context, prefix: String, hsv: FloatArray, commit: Boolean) {
+        val e = sp(ctx).edit()
+            .putFloat("${prefix}_h", hsv[0]).putFloat("${prefix}_s", hsv[1]).putFloat("${prefix}_v", hsv[2])
+        if (commit) e.putInt("st_version", styleVersion(ctx) + 1)
+        e.apply()
+    }
+
     /** Hintergrundton auf dem Regler: 0 … < Ui.TONE_NEUTRAL = neutral, sonst Farbton (Wert − TONE_NEUTRAL). */
     fun toneValue(ctx: Context): Int {
         val v = sp(ctx).getInt("st_tone_v", -1)
@@ -77,7 +103,8 @@ object Prefs {
 
     fun resetStyle(ctx: Context) {
         val e = sp(ctx).edit()
-        for (k in listOf("st_accent", "st_hue", "st_tone_v", "st_bg", "st_tone", "st_vis", "st_fsize", "st_fstyle", "st_corners")) e.remove(k)
+        for (k in listOf("st_accent", "st_hue", "st_tone_v", "st_acc_h", "st_acc_s", "st_acc_v",
+                "st_tone_h", "st_tone_s", "st_tone_v", "st_bg", "st_tone", "st_vis", "st_fsize", "st_fstyle", "st_corners")) e.remove(k)
         e.putInt("st_version", styleVersion(ctx) + 1).apply()
     }
 

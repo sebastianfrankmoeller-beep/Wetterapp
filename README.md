@@ -44,7 +44,7 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Widget** (siehe unten)
 - **Wischen** zwischen Vorhersage, Radar und Wind (auf den Karten vom Rand aus oder auf den Bedienfeldern)
 - **Eigenes Aussehen** (Einstellungen → Darstellung → Anpassen): Akzentfarbe und Hintergrundton
-  stufenlos per Farbregler, Hintergrund (neutral, Verlauf oder eigenes Bild – auch HEIC, richtig gedreht,
+  frei wählbar per Farbwähler (Farbfeld + Farbton, stufenlos, Live-Vorschau beim Ziehen, Hinweis bei schlechter Lesbarkeit), Hintergrund (neutral, Verlauf oder eigenes Bild – auch HEIC, richtig gedreht,
   weichgezeichnet und automatisch abgedunkelt), Schrift (Modern/Kompakt/Rund, Größe), Ecken
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 

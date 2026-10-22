@@ -107,6 +107,26 @@ class SettingsActivity : Activity() {
         scrollView.post { scrollView.scrollTo(0, y) }
     }
 
+    // Live-Vorschau beim Ziehen der Farbwähler (ohne die Seite neu aufzubauen)
+    private var previewBox: View? = null
+    private var previewCard: View? = null
+    private var previewPill: TextView? = null
+    private var accentWarn: View? = null
+
+    private fun previewBg(pal: Ui.Palette) = Ui.background(this, pal).let { d ->
+        if (d is android.graphics.drawable.ColorDrawable) Ui.rect(pal.bg, dpf(18), pal.border, 1) else d
+    }
+
+    private fun livePreview() {
+        val lp = Ui.palette(this)
+        Ui.applySystemBars(this, lp)
+        Ui.applyBackground(this, scrollView, lp)
+        previewBox?.background = previewBg(lp)
+        previewCard?.background = Ui.rect(lp.surface, dpf(20), lp.border, 1)
+        previewPill?.apply { background = Ui.pressable(lp, lp.accent, dpf(20)); setTextColor(lp.onAccent) }
+        accentWarn?.visibility = if (Ui.contrast(lp.accent, lp.bg) < 2.0) View.VISIBLE else View.GONE
+    }
+
     private val REQ_IMAGE = 41
 
     private fun pickImage() {
@@ -143,11 +163,10 @@ class SettingsActivity : Activity() {
 
         // Mini-Vorschau
         rows.add(LinearLayout(this).apply {
+            previewBox = this
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(14), dp(14), dp(14))
-            background = Ui.background(this@SettingsActivity, p).let { d ->
-                if (d is android.graphics.drawable.ColorDrawable) Ui.rect(p.bg, dpf(18), p.border, 1) else d
-            }
+            background = previewBg(p)
             clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) =
@@ -155,6 +174,7 @@ class SettingsActivity : Activity() {
             }
             addView(Ui.tv(this@SettingsActivity, "Vorschau", 20f, p.text, true))
             addView(LinearLayout(this@SettingsActivity).apply {
+                previewCard = this
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 background = Ui.rect(p.surface, dpf(20), p.border, 1)
@@ -164,21 +184,25 @@ class SettingsActivity : Activity() {
                     addView(Ui.tv(this@SettingsActivity, "14°", 34f, p.text).apply { typeface = Ui.TF_LIGHT })
                     addView(Ui.tv(this@SettingsActivity, "Wolkig", 13f, p.muted))
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
-                addView(pill("Aktiv", p.accent, p.onAccent) {})
+                addView(pill("Aktiv", p.accent, p.onAccent) {}.also { previewPill = it })
                 addView(pill("Knopf", p.surfaceHi, p.text) {}, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(10) })
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4); bottomMargin = dp(12) }
         })
 
-        // Akzentfarbe: stufenloser Farbton-Regler
+        // Akzentfarbe: frei wählbar (Farbfeld + Farbton), stufenlos, live
         rows.add(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(12))
             addView(Ui.tv(this@SettingsActivity, "Akzentfarbe", 16f, p.text, true))
-            addView(ColorSlider(this@SettingsActivity, p, 359, Prefs.accentHue(this@SettingsActivity),
-                swatch = { Ui.accentFor(it, p.dark) }).apply {
-                onCommit = { v -> Prefs.setStyle(this@SettingsActivity, "st_hue", v); scrollView.post { restyle() } }
+            addView(ColorPicker(this@SettingsActivity, p, Prefs.accentHsv(this@SettingsActivity)).apply {
+                onChange = { hsv -> Prefs.setHsv(this@SettingsActivity, "st_acc", hsv, false); livePreview() }
+                onCommit = { hsv -> Prefs.setHsv(this@SettingsActivity, "st_acc", hsv, true); scrollView.post { restyle() } }
             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
+            addView(Ui.tv(this@SettingsActivity, "Schlecht lesbar auf diesem Hintergrund – etwas heller oder kräftiger wählen", 12.5f, p.warn).apply {
+                accentWarn = this
+                visibility = if (Ui.contrast(p.accent, p.bg) < 2.0) View.VISIBLE else View.GONE
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) })
         })
 
         // Hintergrund
@@ -191,13 +215,14 @@ class SettingsActivity : Activity() {
                 if (v == Ui.BG_IMAGE && !BgImage.exists(this@SettingsActivity)) pickImage()
                 else { Prefs.setStyle(this@SettingsActivity, "st_bg", v); restyle() }
             })
-            // Ton (für Neutral und Verlauf; bei Bild die Abdunkelungsfarbe): links neutral, dann alle Farbtöne
+            // Ton (für Neutral und Verlauf; bei Bild die Abdunkelungsfarbe): frei wählbar, nur dunkle Töne
             addView(Ui.tv(this@SettingsActivity, if (bgStyle == Ui.BG_IMAGE) "Ton der Abdunkelung" else "Ton", 14f, p.text, true),
                 LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(14) })
-            addView(ColorSlider(this@SettingsActivity, p, Ui.TONE_MAX, Prefs.toneValue(this@SettingsActivity),
-                swatch = { Ui.toneSwatch(it, p.dark) },
-                thumb = { Ui.toneFor(it).let { t -> if (p.dark) t.darkSurface else t.lightBg } }).apply {
-                onCommit = { v -> Prefs.setStyle(this@SettingsActivity, "st_tone_v", v); scrollView.post { restyle() } }
+            if (!p.dark) addView(Ui.tv(this@SettingsActivity, "Gewählt wird die dunkle Variante; im Hellmodus gilt ein passender heller Ton.", 12f, p.muted),
+                LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) })
+            addView(ColorPicker(this@SettingsActivity, p, Prefs.toneHsv(this@SettingsActivity), 0f, Ui.TONE_V_MAX).apply {
+                onChange = { hsv -> Prefs.setHsv(this@SettingsActivity, "st_tone", hsv, false); livePreview() }
+                onCommit = { hsv -> Prefs.setHsv(this@SettingsActivity, "st_tone", hsv, true); scrollView.post { restyle() } }
             }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
             if (bgStyle == Ui.BG_IMAGE) {
                 addView(Ui.tv(this@SettingsActivity, "Bild sichtbar", 14f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(14) })

@@ -177,7 +177,29 @@ object Ui {
         if (v < TONE_NEUTRAL) (if (dark) 0xFF3A3D42.toInt() else 0xFFCFD2D6.toInt())
         else hsl((v - TONE_NEUTRAL).toFloat(), 0.45f, if (dark) 0.32f else 0.80f)
 
-    fun tone(ctx: Context): Tone = toneFor(Prefs.toneValue(ctx))
+    /** Hintergrundton aus der gewählten (dunklen) Farbe; helle Varianten für den Hellmodus daraus abgeleitet. */
+    fun toneFromHsv(hsv: FloatArray): Tone {
+        val h = hsv[0]; val s = hsv[1].coerceIn(0f, 1f); val v = hsv[2].coerceIn(0f, TONE_V_MAX)
+        fun c(hh: Float, ss: Float, vv: Float) = android.graphics.Color.HSVToColor(floatArrayOf(hh, ss.coerceIn(0f, 1f), vv.coerceIn(0f, 1f)))
+        val darkBg = c(h, s, v)
+        val darkSurface = c(h, s * 0.85f, v + 0.05f + 0.02f * (1 - s))
+        val lightBg = c(h, s * 0.35f, 0.965f - v * 0.15f)
+        val lightSurface = c(h, s * 0.15f, 1f - v * 0.05f)
+        return Tone("", darkBg, darkSurface, lightBg, lightSurface)
+    }
+
+    /** Höchste Helligkeit für den (dunklen) Hintergrundton – darüber wird Text schlecht lesbar. */
+    const val TONE_V_MAX = 0.30f
+
+    fun tone(ctx: Context): Tone = toneFromHsv(Prefs.toneHsv(ctx))
+
+    fun accentColor(ctx: Context): Int = android.graphics.Color.HSVToColor(Prefs.accentHsv(ctx))
+
+    /** Kontrastverhältnis zweier Farben (1 … 21). */
+    fun contrast(a: Int, b: Int): Double {
+        val la = luminance(a); val lb = luminance(b)
+        return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05)
+    }
 
     const val BG_NEUTRAL = 0
     const val BG_GRADIENT = 1
@@ -245,7 +267,7 @@ object Ui {
     /** Akzentfarbe, Hintergrundton und Glas-Effekt auf die Grundpalette anwenden. */
     fun customize(ctx: Context, base: Palette): Palette {
         val tone = tone(ctx)
-        val accent = accentFor(Prefs.accentHue(ctx), base.dark)
+        val accent = accentColor(ctx)
         val onAccent = if (luminance(accent) > 0.4) 0xFF0B0C0E.toInt() else 0xFFFFFFFF.toInt()
         val bg = if (base.dark) tone.darkBg else tone.lightBg
         val surface0 = if (base.dark) tone.darkSurface else tone.lightSurface
