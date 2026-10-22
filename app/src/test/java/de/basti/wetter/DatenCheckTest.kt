@@ -150,11 +150,24 @@ class DatenCheckTest {
         val report = StringBuilder("# Datencheck ${ts(System.currentTimeMillis() / 1000)} UTC\n\n")
         val problems = ArrayList<String>()
         var reached = 0
+        radarInfo.clear()
         for (p in orte) {
             val raw = runCatching { WeatherApi.fetchRaw(p) }.getOrElse {
                 report.append("## ${p.name}\nnicht erreichbar: ${it.message}\n\n"); null
             } ?: continue
             reached++
+            // Radar-Abruf getrennt messen (Dauer, Größe, Fehler)
+            if (RadarNowcast.covers(p.lat, p.lon)) {
+                val t0 = System.currentTimeMillis()
+                val res = runCatching { Net.get(RadarNowcast.url(p), 20000) }
+                val ms = System.currentTimeMillis() - t0
+                val info = res.fold({ body ->
+                    val slots = runCatching { RadarNowcast.slots(JSONObject(body)).size }.getOrElse { -1 }
+                    "${body.length} Zeichen, $slots Viertelstunden"
+                }, { e -> "FEHLER ${e.javaClass.simpleName}: ${e.message}" })
+                radarInfo[p.name] = "Radar-Abruf: $ms ms, $info"
+                if (ms > 10000) problems.add("${p.name}: Radar-Abruf dauert $ms ms (App wartet höchstens 10 s)")
+            }
             val f = runCatching { WeatherApi.parse(p, raw) }.getOrElse {
                 problems.add("${p.name}: Auswertung fehlgeschlagen – ${it}"); null
             } ?: continue
@@ -168,6 +181,8 @@ class DatenCheckTest {
         org.junit.Assume.assumeTrue("kein Ort erreichbar (Netz)", reached > 0)
         assertTrue("Widersprüche:\n" + problems.joinToString("\n"), problems.isEmpty())
     }
+
+    private val radarInfo = HashMap<String, String>()
 
     private fun check(p: Place, f: Forecast, out: StringBuilder, problems: MutableList<String>) {
         val nowSec = System.currentTimeMillis() / 1000
@@ -187,6 +202,8 @@ class DatenCheckTest {
         out.append("- Modell-Schichten: ${c.layers ?: "–"} · Modell-Code Stunde: ${f.hours.first().code}\n")
         out.append("- Kurzfrist: ${nc.joinToString(" ") { "%.2f".format(Locale.US, it.second * 4) }} mm/h" +
             " · Radar bis ${if (f.nowcastRadarUntil > 0) f.hhmm(f.nowcastRadarUntil) else "–"} · Niesel-Lage: ${f.drizzle}\n")
+        radarInfo[p.name]?.let { out.append("- $it\n") }
+        if (RadarNowcast.covers(p.lat, p.lon) && f.nowcastRadarUntil == 0L) bad("kein Radar-Nowcast in der Auswertung")
         summary?.let { out.append("- Regenkarte: ${it.first}${if (it.second.isNotEmpty()) " · ${it.second}" else ""}\n") }
         if (r != null) {
             out.append("- Lauf-Check: ${r.headline} – ${r.reason}\n")

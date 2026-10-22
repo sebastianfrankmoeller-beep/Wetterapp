@@ -602,12 +602,17 @@ object RadarNowcast {
 
     fun fetchRaw(p: Place): String? {
         if (!covers(p.lat, p.lon)) return null
+        return runCatching { Net.get(url(p), 10000) }.getOrNull()
+    }
+
+    /** Abfrage-Adresse (auch für den Datencheck). */
+    fun url(p: Place): String {
         val now = System.currentTimeMillis() / 1000
         val from = synchronized(ISO) { ISO.format(java.util.Date((now - 20 * 60) * 1000)) }
         val to = synchronized(ISO) { ISO.format(java.util.Date((now + 135 * 60) * 1000)) }
         val url = "https://api.brightsky.dev/radar?lat=%.4f&lon=%.4f&distance=4000&format=plain".format(Locale.US, p.lat, p.lon) +
             "&date=${Net.enc(from)}&last_date=${Net.enc(to)}"
-        return runCatching { Net.get(url, 10000) }.getOrNull()
+        return url
     }
 
     fun parseIso(s: String): Long? {
