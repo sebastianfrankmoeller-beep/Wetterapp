@@ -165,23 +165,35 @@ object Observation {
         return n.replace(" (Schäferhaus)", "-Schäferhaus").replace("(Schäferhaus", "Schäferhaus")
     }
 
-    fun parse(root: JSONObject): Obs? = runCatching {
+    /** Bewölkung/Sonne nur von Stationen in ähnlicher Höhe (ein Gipfel sagt nichts über das Tal). */
+    const val MAX_HEIGHT_DIFF = 400.0
+
+    fun parse(root: JSONObject, elevation: Double = Double.NaN): Obs? = runCatching {
         val w = root.optJSONObject("weather") ?: return null
         val arr = root.optJSONArray("sources") ?: return null
         val src = HashMap<Int, Pair<String, Double>>()
+        val height = HashMap<Int, Double>()
         for (i in 0 until arr.length()) {
             val s = arr.optJSONObject(i) ?: continue
             src[s.optInt("id")] = prettyName(s.optString("station_name")) to s.num("distance") / 1000
+            height[s.optInt("id")] = s.num("height")
         }
         val primary = w.optInt("source_id", -1)
         val fb = w.optJSONObject("fallback_source_ids")
-        fun srcOf(k: String): Pair<String, Double>? = src[fb?.optInt(k, primary) ?: primary]
+        fun idOf(k: String) = fb?.optInt(k, primary) ?: primary
+        fun srcOf(k: String): Pair<String, Double>? = src[idOf(k)]
         fun within(k: String, km: Double): Double {
             val d = srcOf(k)?.second ?: return Double.NaN
             return if (d.isNaN() || d > km) Double.NaN else w.num(k)
         }
         fun near(k: String) = within(k, NEAR_KM)
-        fun far(k: String) = within(k, FAR_KM)
+        fun far(k: String): Double {
+            // weiter entfernte Station nur in ähnlicher Höhe wie der Ort
+            val hgt = height[idOf(k)] ?: Double.NaN
+            if ((srcOf(k)?.second ?: 0.0) > NEAR_KM && !elevation.isNaN() && !hgt.isNaN() &&
+                kotlin.math.abs(hgt - elevation) > MAX_HEIGHT_DIFF) return Double.NaN
+            return within(k, FAR_KM)
+        }
         val t = RadarNowcast.parseIso(w.optString("timestamp")) ?: return null
         val main = src[primary] ?: return null
 

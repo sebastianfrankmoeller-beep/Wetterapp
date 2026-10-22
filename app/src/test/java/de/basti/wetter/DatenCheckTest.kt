@@ -111,6 +111,15 @@ class DatenCheckTest {
         assertTrue(c.cloudSource, c.cloudSource.startsWith("gemessen"))
     }
 
+    @Test fun gipfelstationZaehltNichtFuersTal() {
+        // Bewölkung/Sonne von einer 30 km entfernten Bergstation (2900 m) – Ort liegt auf 10 m
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0,
+            obs = Obs(cloud = 0.0, cloudKm = 30.0, cloudHeight = 2900.0, sun30 = 30.0)))
+        val c = f.current()!!
+        assertFalse("Bergstation verworfen", c.cloudMeasured)
+        assertTrue("keine Sonne vom Gipfel: ${c.sunInfo}", c.sunInfo == null)
+    }
+
     @Test fun messwertVerschiebtStundenUndLaufCheck() {
         // Modell 8°, Station 12° → "Jetzt", Stundenstreifen und Lauf-Check passen zusammen
         val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, modelTemp = 8.0,
@@ -262,7 +271,7 @@ class DatenCheckTest {
     private class Obs(
         val temp: Double = Double.NaN,
         val condition: String? = null, val conditionKm: Double = 3.0,
-        val cloud: Double = Double.NaN, val cloudKm: Double = 3.0,
+        val cloud: Double = Double.NaN, val cloudKm: Double = 3.0, val cloudHeight: Double = 20.0,
         val sun30: Double = Double.NaN
     )
 
@@ -347,7 +356,7 @@ class DatenCheckTest {
             val sources = JSONArray()
                 .put(JSONObject().put("id", 1).put("station_name", "TESTSTATION").put("distance", 3000))
                 .put(JSONObject().put("id", 2).put("station_name", "REGENSTATION").put("distance", o.conditionKm * 1000))
-                .put(JSONObject().put("id", 3).put("station_name", "WOLKENSTATION").put("distance", o.cloudKm * 1000))
+                .put(JSONObject().put("id", 3).put("station_name", "WOLKENSTATION").put("distance", o.cloudKm * 1000).put("height", o.cloudHeight))
             root.put("obs", JSONObject().put("weather", w).put("sources", sources))
         }
         return root.toString()

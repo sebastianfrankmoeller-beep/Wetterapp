@@ -172,9 +172,13 @@ object Net {
         con.connectTimeout = timeoutMs
         con.readTimeout = timeoutMs
         con.setRequestProperty("User-Agent", UA)
+        // Komprimiert anfordern (Bright Sky verlangt das für Radardaten) und selbst entpacken
+        con.setRequestProperty("Accept-Encoding", "gzip")
         try {
             val code = con.responseCode
-            val stream = if (code in 200..299) con.inputStream else con.errorStream
+            val raw = if (code in 200..299) con.inputStream else con.errorStream
+            val stream = if (raw != null && con.contentEncoding.equals("gzip", ignoreCase = true))
+                java.util.zip.GZIPInputStream(raw) else raw
             val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
             if (code !in 200..299) {
                 val reason = runCatching { JSONObject(body).optString("reason") }.getOrNull()
@@ -376,7 +380,7 @@ object WeatherApi {
         var radarUntil = 0L
         var near: Map<Long, Double> = emptyMap()
         var drizzle = false
-        val obs = root.optJSONObject("obs")?.let { Observation.parse(it) }
+        val obs = root.optJSONObject("obs")?.let { Observation.parse(it, ec.optDouble("elevation", Double.NaN)) }
         root.optJSONObject("radar")?.let { r ->
             near = RadarNowcast.slots(r, nearMax = true).filter { it.first + 900 > nowSec }.toMap()
             val slots = RadarNowcast.slots(r).filter { it.first + 900 > nowSec }
