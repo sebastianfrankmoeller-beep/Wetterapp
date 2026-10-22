@@ -265,7 +265,8 @@ object WidgetRenderer {
         val now = System.currentTimeMillis() / 1000
         val upcoming = nc.filter { it.first + 900 > now }
         if (upcoming.size < 4) return null
-        val (head, sub) = nowcastSummary(f, upcoming)
+        val (head, subAll) = nowcastSummary(f, upcoming)
+        val sub = subAll.lineSequence().first()
         // Uhrzeiten statt "in 40 Min." – das Widget wird nur etwa alle 30 Minuten neu gezeichnet
         val what = if (f.nowcastSnow) "Schnee" else "Regen"
         return if (sub.isEmpty() || !head.startsWith("$what ")) head else "$what  ·  $sub"

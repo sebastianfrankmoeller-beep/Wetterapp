@@ -16,6 +16,9 @@ object RunCheck {
     /** Verschiebung der Kleidungsgrenzen in °C je Läufertyp. */
     private val TYPE_SHIFT = doubleArrayOf(0.0, 4.0, 7.0)
 
+    /** Interner Grund "nass" – der Text ("Mäßiger Regen bis ca. 22:15") entsteht aus der ganzen Regenphase. */
+    private const val WET = "nass"
+
     const val GREEN = 0
     const val YELLOW = 1
     const val RED = 2
@@ -69,9 +72,10 @@ object RunCheck {
         if (code in 56..57 || code in 66..67) return RED to "Glatteis"
         if (!gust.isNaN() && gust >= 65) return RED to "Sturmböen"
         if (!feels.isNaN() && feels >= 32) return RED to "Hitze"
-        if (rain >= 4.0) return RED to if (snowy) "starker Schneefall" else "starker Regen"
+        // Ab 4 mm/h wird man in Minuten nass → Rot (Läufer-Schwelle); die Stärke im Text richtet sich nach DWD
+        if (rain >= 4.0) return RED to WET
         if (!temp.isNaN() && temp <= 1.0 && rain >= 0.1) return YELLOW to "Glätte möglich"
-        if (rain >= 0.3) return YELLOW to if (snowy) "Schnee" else if (rain >= 2.5) "mäßiger Regen" else "leichter Regen"
+        if (rain >= 0.3) return YELLOW to WET
         if (thunder == 1) return YELLOW to "Gewitterrisiko"
         if (!gust.isNaN() && gust >= 45) return YELLOW to "böiger Wind"
         if (!feels.isNaN() && feels >= 26) return YELLOW to "warm"
@@ -97,7 +101,7 @@ object RunCheck {
             val gust = interp(hs, t) { it.gust }
             var (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0)
             // Niesel: unangenehm nass, auch wenn die Menge klein ist
-            if (lvl == GREEN && f.drizzle && !snowy && rain >= 0.1) { lvl = YELLOW; why = "Niesel" }
+            if (lvl == GREEN && f.drizzle && !snowy && rain >= 0.1) { lvl = YELLOW; why = WET }
             val near = ncKey != null && rain < 0.1 && (f.nowcastNear[ncKey] ?: 0.0) * 4 >= 0.3
             Slot(t, rain, snowy, temp, feels, interp(hs, t) { it.wind }, gust, h?.windDir ?: Double.NaN,
                 h?.thunder ?: 0, h?.isDay ?: true, lvl, why, near)
@@ -133,6 +137,7 @@ object RunCheck {
             warnRed != null -> "Amtliche Warnung: " + titleCase(warnRed.event)
             first == null && relevant.isNotEmpty() -> "Warnung: " + titleCase(relevant.first().event)
             first == null -> "Trocken und angenehm"
+            first.reason == WET -> wetPhase(f, slots, level)
             first === slots.first() -> {
                 val endIdx = slots.indexOfFirst { it.level < level }
                 if (endIdx < 0) "${cap(why(first))} die ganzen 2 Stunden"
@@ -200,7 +205,10 @@ object RunCheck {
         if (uvMax != null && uvMax >= 5) hints.add(GlyphView.Kind.SUN to "UV-Index ${uvMax.roundToInt()} – Sonnenschutz")
         for (w in relevant.take(2)) if (w !== warnRed) hints.add(GlyphView.Kind.WARNING to "Warnung: ${titleCase(w.event)} (${w.timeRange()})")
 
-        val better = if (level == GREEN) null else betterWindow(f, start, level)
+        // Regenpause (aus dem Kurzfrist-Verlauf) ist für Regen der nützlichere Tipp als ein späteres 2-Std.-Fenster
+        val pause = if (slots.any { it.rain >= 0.3 }) rainPause(f, now) else null
+        val window = if (level == GREEN) null else betterWindow(f, start, level)
+        val better = listOfNotNull(pause, window).joinToString("\n").ifEmpty { null }
 
         return Result(level, headline, reason, clothing, clothingNote, slots, hints, better)
     }
@@ -233,11 +241,10 @@ object RunCheck {
         if (now.ice && !later.ice) out.add("keine Glätte")
         if (now.rainSlots >= 2) {
             when {
-                later.rainSlots == 0 -> out.add("trocken")
-                later.rainSlots <= now.rainSlots - 3 -> out.add("deutlich weniger Regen")
-                RainRate.level(later.rainMax) < RainRate.level(now.rainMax) && RainRate.level(now.rainMax) >= 2 ->
-                    out.add("nur noch ${RainRate.NAMES[RainRate.level(later.rainMax)]}er Regen")
+                later.rainSlots == 0 && later.rainMax < 0.1 -> out.add("trocken")
             }
+            // Bei Regen zählt nur "trocken"; sonst lieber die Regenpause nennen
+            if (out.isEmpty() && now.level >= YELLOW && later.rainSlots > 0) return null
         }
         if (now.gustMax >= 45 && later.gustMax <= now.gustMax - 10) out.add("Böen nur noch bis ${later.gustMax.roundToInt()} km/h")
         if (!now.feelsMax.isNaN() && now.feelsMax >= 26 && later.feelsMax <= now.feelsMax - 4) out.add("kühler (${Fmt.temp(later.feelsMax)} gefühlt)")
@@ -273,6 +280,61 @@ object RunCheck {
         val pick = firstGreen?.takeIf { g -> firstBetter == null || g.first - firstBetter!!.first <= 3 * 3600 } ?: firstBetter ?: return null
         val day = if (f.cal(pick.first).get(java.util.Calendar.DAY_OF_YEAR) != f.cal(start).get(java.util.Calendar.DAY_OF_YEAR)) "morgen " else ""
         return "Besser $day${f.hhmm(pick.first)}–${f.hhmm(pick.first + 7200)}: ${pick.second.joinToString(", ")}"
+    }
+
+    private fun what(snowy: Boolean, drizzle: Boolean) = if (snowy) "Schneefall" else if (drizzle) "Niesel" else "Regen"
+
+    /** Stärke nach DWD als Adjektiv: "Leichter" / "Mäßiger" / "Starker". */
+    private fun adj(mmh: Double, noun: String): String {
+        val a = when (RainRate.level(mmh)) { 3 -> "Stark"; 2 -> "Mäßig"; else -> "Leicht" }
+        return a + if (noun == "Niesel" || noun == "Regen" || noun == "Schneefall") "er" else "e"
+    }
+
+    /**
+     * Text der Regenphase in den 2 Stunden, z. B. "Mäßiger Regen bis ca. 22:15, in der Spitze 5 mm/h"
+     * oder "Leichter Regen ab ca. 21:40 (in 25 Min.)". Beginn = Anfang der nassen Phase, nicht die stärkste Viertelstunde.
+     */
+    private fun wetPhase(f: Forecast, slots: List<Slot>, level: Int): String {
+        val now = System.currentTimeMillis() / 1000
+        val i0 = slots.indexOfFirst { it.rain >= 0.3 || it.reason == WET }.coerceAtLeast(0)
+        var i1 = i0
+        while (i1 + 1 < slots.size && (slots[i1 + 1].rain >= 0.3 || slots[i1 + 1].reason == WET)) i1++
+        val phase = slots.subList(i0, i1 + 1)
+        val peak = phase.maxOf { it.rain }
+        val noun = what(phase.any { it.snowy }, f.drizzle)
+        val head = "${adj(peak, noun)} $noun"
+        val spitze = if (level == RED) ", in der Spitze ${peak.roundToInt()} mm/h" else ""
+        return when {
+            i0 == 0 && i1 == slots.size - 1 -> "$head die ganzen 2 Stunden$spitze"
+            i0 == 0 -> "$head bis ca. ${f.hhmm(slots[i1 + 1].t)}$spitze"
+            else -> "$head ab ca. ${f.hhmm(slots[i0].t)} (in ${((slots[i0].t - now) / 60).coerceAtLeast(0)} Min.)$spitze"
+        }
+    }
+
+    /**
+     * Trockene Lücke von mindestens 30 Minuten in den nächsten 3 Stunden (Radar + Kurzfrist-Modell),
+     * nach dem nächsten Regen: "Regenpause ca. 22:15–23:00 (45 Min.)" bzw. "Ab ca. 22:15 trocken".
+     */
+    private fun rainPause(f: Forecast, now: Long): String? {
+        val nc = f.nowcast.filter { it.first + 900 > now }.take(13)
+        if (nc.size < 4) return null
+        val wet = { i: Int -> nc[i].second * 4 >= 0.1 }
+        val w = nc.indices.firstOrNull { wet(it) } ?: return null
+        if (w >= 8) return null                                      // Regen erst nach den 2 Stunden
+        var i = w
+        while (i < nc.size) {
+            if (!wet(i)) {
+                var j = i
+                while (j < nc.size && !wet(j)) j++
+                if (j - i >= 2) {
+                    val from = f.hhmm(nc[i].first)
+                    return if (j >= nc.size) "Ab ca. $from trocken"
+                    else "Regenpause ca. $from–${f.hhmm(nc[j].first)} (${(j - i) * 15} Min.)"
+                }
+                i = j
+            } else i++
+        }
+        return null
     }
 
     /**

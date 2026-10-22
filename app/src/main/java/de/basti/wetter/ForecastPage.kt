@@ -50,7 +50,14 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private fun dp(v: Number) = Ui.dp(context, v)
     private fun dpf(v: Number) = Ui.dpf(context, v)
 
-    val scroll = ScrollView(ctx)
+    val scroll = PullScrollView(ctx)
+    private val indicator = RefreshIndicator(ctx, p)
+    private val refreshNote = Ui.tv(ctx, "", 13f, p.text, true).apply {
+        setPadding(Ui.dp(ctx, 14), Ui.dp(ctx, 8), Ui.dp(ctx, 14), Ui.dp(ctx, 8))
+        background = Ui.rect(Ui.withAlpha(p.surfaceHi, 0xF2), Ui.dpf(ctx, 18), p.border, 1)
+        elevation = Ui.dpf(ctx, 6)
+        visibility = View.GONE
+    }
     private val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(28)) }
 
     private val title = Ui.tv(ctx, "", 28f, p.text, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
@@ -94,6 +101,13 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         scroll.isVerticalScrollBarEnabled = false
         scroll.addView(root)
         addView(scroll, LayoutParams(MATCH, MATCH))
+        // Zum Aktualisieren nach unten ziehen
+        addView(indicator, LayoutParams(indicator.size, indicator.size, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        addView(refreshNote, LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(18) })
+        scroll.onPull = { v -> indicator.pull(v) }
+        scroll.onRelease = { go ->
+            if (go && !indicator.isSpinning) { setRefreshing(true); cb.onRefresh() } else if (!indicator.isSpinning) indicator.pull(0f)
+        }
 
         fun add(v: View, bottom: Int) = root.addView(v, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(bottom) })
 
@@ -234,6 +248,25 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         addView(Ui.tv(context, label, 11.5f, p.muted))
         addView(Ui.tv(context, value, 16f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(5) })
         if (sub.isNotEmpty()) addView(Ui.tv(context, sub, 11.5f, p.muted), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(3) })
+    }
+
+    // ------------------------------------------------------------- Aktualisieren
+
+    fun setRefreshing(on: Boolean) {
+        if (on) refreshNote.visibility = View.GONE
+        indicator.spin(on)
+    }
+
+    /** Laden beendet: Kreis ausblenden und kurz Rückmeldung zeigen ("Aktualisiert 21:20 · …"). */
+    fun refreshDone(note: String) {
+        indicator.spin(false)
+        refreshNote.text = note
+        refreshNote.alpha = 0f
+        refreshNote.visibility = View.VISIBLE
+        refreshNote.animate().alpha(1f).setDuration(180).withEndAction {
+            refreshNote.animate().alpha(0f).setStartDelay(3200).setDuration(400)
+                .withEndAction { refreshNote.visibility = View.GONE; refreshNote.animate().setStartDelay(0) }.start()
+        }.start()
     }
 
     // ------------------------------------------------------------- Ortsleiste
@@ -510,18 +543,27 @@ fun nowcastSummary(f: Forecast, nc: List<Pair<Long, Double>>): Pair<String, Stri
             if (r == 0 || r == 60) "${if (r == 60) h + 1 else h} Std." else "$h Std. $r Min."
         }
     }
-    // Zusammenhängende nasse Phase ab dem ersten nassen Wert
+    // Zusammenhängende nasse Phase ab dem ersten nassen Wert (eine einzelne trockene Viertelstunde zählt mit)
     var lastWet = firstWet
-    while (lastWet + 1 < nc.size && wet(nc[lastWet + 1].second)) lastWet++
+    while (lastWet + 1 < nc.size && (wet(nc[lastWet + 1].second) ||
+            (lastWet + 2 < nc.size && wet(nc[lastWet + 2].second)))) lastWet++
     val phase = nc.subList(firstWet, lastWet + 1)
     val sum = phase.sumOf { it.second }
     val strength = RainRate.NAMES[RainRate.level(phase.maxOf { it.second } * 4)]
     val endTxt = if (lastWet + 1 < nc.size) "bis ca. ${f.hhmm(nc[lastWet + 1].first)}" else "hält an"
     val amount = if (f.nowcastSnow) "${Fmt.mm(sum / 0.7)} cm" else "${Fmt.mm(sum)} mm"
         .let { if (f.drizzle) "$it nach Modell" else it }
+    // Fängt es danach wieder an? "Pause bis ca. 23:00, dann wieder leicht"
+    val again = (lastWet + 1 until nc.size).firstOrNull { wet(nc[it].second) }
+    val resume = if (again == null) "" else {
+        var e = again
+        while (e + 1 < nc.size && wet(nc[e + 1].second)) e++
+        val lvl = RainRate.NAMES[RainRate.level(nc.subList(again, e + 1).maxOf { it.second } * 4)]
+        "\nPause bis ca. ${f.hhmm(nc[again].first)}, dann wieder $lvl"
+    }
     return if (firstWet == 0) {
         val head = if (lastWet + 1 < nc.size) "$what hört in ${rel(nc[lastWet + 1].first)} auf" else "$what hält an"
-        head to "$strength  ·  $endTxt  ·  $amount"
+        head to "$strength  ·  $endTxt  ·  $amount$resume"
     } else {
         "$what in ${rel(nc[firstWet].first)}" to "$strength  ·  ab ${f.hhmm(nc[firstWet].first)}  ·  $endTxt  ·  $amount"
     }

@@ -120,6 +120,40 @@ class DatenCheckTest {
         assertTrue("keine Sonne vom Gipfel: ${c.sunInfo}", c.sunInfo == null)
     }
 
+    @Test fun dauerregenIstKeinSchauer() {
+        // Seit 1 Std. flächig ~3 mm/h, Modell meint "Schauer" → Jetzt-Karte "Mäßiger Regen", kein Schauer
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 25, radarFuture = 25, futureMin = 45, modelCode = 80))
+        assertTrue("Landregen erkannt", f.steadyRain)
+        val c = f.current()!!
+        assertEquals("Mäßiger Regen", c.text)
+        assertEquals(63, c.code)
+        val r = RunCheck.evaluate(f, 0, null)!!
+        assertTrue("Lauf-Check beschreibt die Phase ab jetzt: ${r.reason}", r.reason.startsWith("Mäßiger Regen bis ca."))
+        assertFalse("kein 'ab ca.' bei Regen jetzt: ${r.reason}", r.reason.contains("ab ca."))
+        assertEquals("Stundenstreifen 'Jetzt' gleich", 63, f.hours.first().code)
+    }
+
+    @Test fun kurzerSchauerBleibtSchauer() {
+        // Erst seit 10 Min. nass, fleckig, Modell "Schauer" → Schauer
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 25, radarPastShare = 0.3, pastMin = 10,
+            radarFuture = 25, futureMin = 15, modelCode = 80))
+        assertFalse(f.steadyRain)
+        val c = f.current()!!
+        assertTrue("Schauer: ${c.text}", c.text.contains("Schauer"))
+    }
+
+    @Test fun regenpauseWirdGenannt() {
+        // jetzt 45 Min. Regen, dann 45 Min. trocken, danach wieder leicht
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 25, radarFuture = 0, modelCode = 61,
+            future = { m -> when { m <= 45 -> 25; m <= 90 -> 0; else -> 10 } }))
+        val (head, sub) = nowcastSummary(f, f.nowcast.take(13))
+        assertTrue("Regenkarte: $head", head.startsWith("Regen hört"))
+        assertTrue("Wiederbeginn genannt: $sub", sub.contains("Pause bis ca.") && sub.contains("dann wieder"))
+        val r = RunCheck.evaluate(f, 0, null)!!
+        assertTrue("Regenpause im Lauf-Check: ${r.better}", r.better?.contains("Regenpause") == true)
+        assertFalse("kein 'nur noch leichter Regen': ${r.better}", r.better?.contains("nur noch") == true)
+    }
+
     @Test fun messwertVerschiebtStundenUndLaufCheck() {
         // Modell 8°, Station 12° → "Jetzt", Stundenstreifen und Lauf-Check passen zusammen
         val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, modelTemp = 8.0,
@@ -242,6 +276,15 @@ class DatenCheckTest {
         val slotNow = f.nowcast.firstOrNull { it.first <= nowSec && nowSec < it.first + 900 }
         val wetNow = (slotNow?.second ?: 0.0) * 4 >= 0.1
         if (wetNow && c.code < 45) bad("Kurzfrist nass (${slotNow!!.second * 4} mm/h), Jetzt-Karte '${c.text}'")
+        if (f.steadyRain && wetNow && c.text.contains("Schauer")) bad("seit 1 Std. Landregen, Jetzt-Karte '${c.text}'")
+        if (wetNow && c.code in 51..82) {
+            val lvl = RainRate.level(slotNow!!.second * 4)
+            val word = c.text.lowercase()
+            val expect = listOf("", "leicht", "mäßig", "stark")[lvl]
+            if (lvl >= 2 && !word.contains(expect)) bad("Jetzt-Karte '${c.text}' passt nicht zur Stärke '$expect'")
+        }
+        if (r != null && r.reason.contains(" ab ca. ") && r.slots.first().rain >= 0.3 && r.reason.contains("Regen"))
+            bad("Lauf-Check sagt 'ab ca.' obwohl es jetzt regnet: ${r.reason}")
         if (summary != null) {
             val anyWet = nc.any { it.second * 4 >= 0.1 }
             if (anyWet && summary.first.startsWith("Kein")) bad("Regenkarte '${summary.first}' trotz Regen im Verlauf")
@@ -281,6 +324,9 @@ class DatenCheckTest {
         val radarPastShare: Double = 1.0, // Anteil der Pixel mit Echo
         val radarFuture: Int,           // Radarwert in der Vorhersage …
         val futureMin: Int = 120,       // … für so viele Minuten ab jetzt, danach trocken
+        val future: ((Int) -> Int)? = null, // oder frei: Radarwert je Minute ab jetzt
+        val pastMin: Int = 60,          // so lange war es schon nass (Minuten)
+        val modelCode: Int? = null,     // Wettercode des Modells für die nassen Stunden
         val modelTemp: Double = 10.0,
         val modelLow: Double = 80.0, val modelMid: Double = 20.0, val modelHigh: Double = 0.0,
         val modelTotal: Double = 85.0,
@@ -308,7 +354,7 @@ class DatenCheckTest {
             .put("relative_humidity_2m", arr { 85 })
             .put("precipitation", arr { if (wet(it)) rainHour else 0.0 })
             .put("snowfall", arr { 0.0 })
-            .put("weather_code", arr { if (wet(it) && rainHour >= 0.1) 51 else 3 })
+            .put("weather_code", arr { if (wet(it) && (rainHour >= 0.1 || s.modelCode != null)) (s.modelCode ?: 51) else 3 })
             .put("cloud_cover", arr { s.modelTotal })
             .put("cloud_cover_low", arr { s.modelLow })
             .put("cloud_cover_mid", arr { s.modelMid })
@@ -330,9 +376,15 @@ class DatenCheckTest {
         // Radar: 9×9 Pixel, Ort in der Mitte, alle 5 Minuten von −20 bis +120 Min.
         val frames = JSONArray()
         val f0 = nowSec - nowSec % 300
-        for (k in -4..24) {
+        for (k in -12..24) {
             val t = f0 + k * 300L
-            val v = if (t <= nowSec) s.radarPast else if (t <= nowSec + s.futureMin * 60) s.radarFuture else 0
+            val min = ((t - nowSec) / 60).toInt()
+            val v = when {
+                t <= nowSec -> if (t >= nowSec - s.pastMin * 60) s.radarPast else 0
+                s.future != null -> s.future.invoke(min)
+                t <= nowSec + s.futureMin * 60 -> s.radarFuture
+                else -> 0
+            }
             val share = if (t <= nowSec) s.radarPastShare else 1.0
             var idx = 0
             val grid = JSONArray((0 until 9).map { _ ->

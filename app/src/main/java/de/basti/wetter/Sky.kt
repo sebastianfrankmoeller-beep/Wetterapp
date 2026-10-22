@@ -337,7 +337,11 @@ fun Forecast.current(): Current? {
     val p60 = o?.precip60?.takeIf { !it.isNaN() } ?: 0.0
     val code: Int
     val text: String
-    when (o?.condition ?: "") {
+    // Regen/Schnee/trocken: Liegt Radar für jetzt vor (alle 5 Min.), entscheidet das Radar –
+    // die Stationsmeldung ist bis zu einer Stunde alt. Gewitter, Hagel, Nebel meldet nur die Station.
+    val radarNow = slotNow != null && slotNow.first < nowcastRadarUntil
+    val cond = (o?.condition ?: "").let { if (radarNow && it in setOf("rain", "snow", "sleet", "dry")) "" else it }
+    when (cond) {
         "thunderstorm" -> { code = if (h.code >= 95) h.code else 95; text = Fmt.codeAt(code, h.isDay) }
         "hail" -> { code = 96; text = Fmt.codeAt(code, h.isDay) }
         "fog" -> { code = 45; text = Fmt.codeAt(code, h.isDay) }
@@ -345,15 +349,12 @@ fun Forecast.current(): Current? {
         "sleet" -> { code = 68; text = Fmt.codeAt(code, h.isDay) }
         "rain" -> { code = if (h.code in 51..67 || h.code in 80..82) h.code else when { p60 < 2.5 -> 61; p60 < 10 -> 63; else -> 65 }; text = Fmt.codeAt(code, h.isDay) }
         else -> {
-            // Kurzfrist-Verlauf (Radar, bei Niesel mit Modell) sagt: es fällt gerade etwas
+            // Kurzfrist-Verlauf (Radar, bei Niesel mit Modell) sagt: es fällt gerade etwas.
+            // Stärke aus der Menge, "Schauer" nur, wenn es nicht seit einer Stunde flächig regnet.
             val ncMmh = (slotNow?.second ?: 0.0) * 4
             val dry = !(ncMmh >= 0.1) && (o?.condition == "dry" || radarDry || h.code in 0..4)
-            if (ncMmh >= 0.1 && h.code !in 51..99) {
-                code = when {
-                    nowcastSnow -> when { ncMmh < 1 -> 71; ncMmh < 5 -> 73; else -> 75 }
-                    drizzle -> when { ncMmh < 0.5 -> 51; ncMmh < 1 -> 53; else -> 61 }
-                    else -> when { ncMmh < 2.5 -> 61; ncMmh < 10 -> 63; else -> 65 }
-                }
+            if (ncMmh >= 0.1) {
+                code = RainCode.of(ncMmh, h.code, nowcastSnow, showery = !steadyRain && h.code in 80..86, drizzle = drizzle)
                 text = Fmt.codeAt(code, h.isDay)
             }
             else if (!dry || h.code == 45 || h.code == 48) { code = h.code; text = Fmt.codeAt(code, h.isDay) }

@@ -12,7 +12,7 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   Erneutes Antippen des gewählten Ortes lädt neu.
 - **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck – **gemessen an der nächsten
   DWD-Station** (Bright Sky, bis 25 km), mit Quelle und Uhrzeit („gemessen 14:00 · Glücksburg-Meierwik (3 km)“).
-  Messwerte werden beim Öffnen und alle 5 Minuten nachgeladen (ohne Open-Meteo-Kontingent);
+  Die Stationen melden etwa stündlich; ob es gerade regnet, entscheidet das Radar (alle 5 Min.);
   Lauf-Check und Stundenstreifen übernehmen die gemessene Abweichung (bis +2 Std. auslaufend)
 - **Bewölkung in Achteln und Prozent** – gemessen an Stationen bis 60 km („4/8 (50 %) · gemessen Schleswig, 32 km“),
   sonst Modell. **Sonne gemessen** (Einstrahlung der letzten 10 Min. gegenüber wolkenlos, sonst Sonnenscheindauer):
@@ -45,6 +45,13 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Fahrmodus** mit Google Maps (siehe unten)
 - **Unwetter-Benachrichtigungen** (auch auf der Garmin-Uhr, siehe unten)
 - **Widget** (siehe unten)
+- **Aktualisieren**: Vorhersage-Seite ganz oben nach unten ziehen – lädt Radar, Stationen, Modell und Warnungen neu
+  (höchstens alle 30 s), danach kurz „Aktualisiert 21:20 · Station 21:00, nächste ca. 22:15“.
+  Radar und Stationen werden außerdem bei offener App alle 5 Minuten nachgeladen
+- **Regen oder Schauer nach dem Radar**: seit einer Stunde durchgehend und flächig nass → „Regen“, sonst „Schauer“;
+  Stärke überall nach DWD (leicht < 2,5 · mäßig < 10 · stark ≥ 10 mm/h). Lauf-Check nennt die Regenphase
+  („Mäßiger Regen bis ca. 22:15“) und eine **Regenpause** ab 30 Min. („Regenpause ca. 22:15–23:00 (45 Min.)“);
+  die Regenkarte nennt den Wiederbeginn („Pause bis ca. 23:00, dann wieder leicht“)
 - **Wischen** zwischen Vorhersage, Radar und Wind (auf den Karten vom Rand aus oder auf den Bedienfeldern)
 - **Eigenes Aussehen** (Einstellungen → Darstellung → Anpassen): Akzentfarbe und Hintergrundton
   frei wählbar per Farbwähler (Farbfeld + Farbton, stufenlos, Live-Vorschau beim Ziehen, Hinweis bei schlechter Lesbarkeit), Hintergrund (neutral, Verlauf oder eigenes Bild – auch HEIC, richtig gedreht,

@@ -230,7 +230,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         }
 
         if (sel == Prefs.CURRENT && (refreshLocation || place == null)) {
-            locateAndLoad()
+            locateAndLoad(force)
         } else if (place != null) {
             load(place, sel, force)
         }
@@ -238,7 +238,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     private fun cacheKey(sel: String, place: Place) = if (sel == Prefs.CURRENT) Prefs.CURRENT else place.id
 
-    private fun locateAndLoad() {
+    private fun locateAndLoad(force: Boolean = false) {
         if (Locator.hasPermission(this)) askNotificationsOnce()
         if (!Locator.hasPermission(this)) {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOC)
@@ -255,7 +255,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         Locator.current(this) { loc ->
             if (loc == null) {
                 val last = Prefs.lastLocation(this)
-                if (last != null) load(last, Prefs.CURRENT, false)
+                if (last != null) load(last, Prefs.CURRENT, force)
                 else forecastPage.showStatus("Kein Standort gefunden. Am besten kurz im Freien oder mit WLAN erneut versuchen.", listOf(
                     "Erneut versuchen" to { locateAndLoad() },
                     "Ort suchen" to { onSearch() }
@@ -268,7 +268,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
             Prefs.setLastLocation(this, provisional)
             if (Prefs.selected(this) == Prefs.CURRENT) {
                 updateHeader(provisional)
-                load(provisional, Prefs.CURRENT, moved)
+                load(provisional, Prefs.CURRENT, moved || force)
             }
             if (moved || prev?.name == "Mein Standort") {
                 Locator.name(this, loc.latitude, loc.longitude) { name, region ->
@@ -315,7 +315,9 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                     bind(f)
                     forecastPage.showStatus(null)
                     WeatherWidget.updateAll(this)
+                    finishRefresh(refreshNote(f))
                 }.onFailure { e ->
+                    finishRefresh("Keine Verbindung – zeige gespeicherte Daten")
                     forecastPage.showStatus(
                         if (shown != null) "Keine Verbindung – zeige gespeicherte Daten"
                         else "Vorhersage konnte nicht geladen werden (${e.message ?: "Netzwerk"})",
@@ -337,8 +339,9 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     }
 
     /**
-     * Nur die Stationsmessung neu holen (Bright Sky, kein Open-Meteo-Kontingent) und in die
+     * Radar und Stationsmessung neu holen (Bright Sky, kein Open-Meteo-Kontingent) und in die
      * gespeicherten Daten einsetzen – höchstens alle 5 Minuten, ohne die Vorhersage neu zu laden.
+     * Das Radar ist alle 5 Minuten neu, die Stationen melden etwa stündlich.
      */
     private fun refreshObs(force: Boolean = false) {
         val f = shown ?: return
@@ -351,14 +354,24 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         obsAt = System.currentTimeMillis()
         val key = cacheKey(Prefs.selected(this), place)
         io.execute {
-            val raw = Observation.fetchRaw(place) ?: return@execute
-            val obsJson = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return@execute
+            var radarRaw: String? = null
+            val tr = Thread { radarRaw = RadarNowcast.fetchRaw(place) }
+            tr.start()
+            val obsJson = Observation.fetchRaw(place)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            tr.join(12000)
+            val radarJson = radarRaw?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            if (obsJson == null && radarJson == null) return@execute
             main.post {
                 if (shown?.place?.id != place.id) return@post
                 val cached = Prefs.cache(this, key) ?: return@post
                 // Zwischenspeicher muss zu genau diesem Ort gehören
                 if (runCatching { org.json.JSONObject(cached).optLong("at") }.getOrNull() != shown?.fetchedAt) return@post
-                val merged = runCatching { org.json.JSONObject(cached).put("obs", obsJson).toString() }.getOrNull() ?: return@post
+                val merged = runCatching {
+                    org.json.JSONObject(cached).apply {
+                        if (obsJson != null) put("obs", obsJson)
+                        if (radarJson != null) put("radar", radarJson)
+                    }.toString()
+                }.getOrNull() ?: return@post
                 val nf = runCatching { WeatherApi.parse(place, merged) }.getOrNull() ?: return@post
                 Prefs.setCache(this, key, merged)
                 shown = nf
@@ -431,7 +444,43 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         WeatherWidget.updateAll(this)
     }
 
-    override fun onRefresh() = showSelected(refreshLocation = true, force = true)
+    // ------------------------------------------------------- Aktualisieren (nach unten ziehen)
+
+    private var refreshAt = 0L
+    private var refreshPending = false
+    private val refreshTimeout = Runnable { finishRefresh("Aktualisieren dauert zu lange – später erneut versuchen") }
+
+    override fun onRefresh() {
+        val now = System.currentTimeMillis()
+        forecastPage.setRefreshing(true)
+        // Höchstens alle 30 Sekunden wirklich neu laden (schont das Open-Meteo-Kontingent)
+        if (shown != null && now - refreshAt < 30_000) {
+            refreshPending = true
+            main.postDelayed({ finishRefresh(refreshNote(shown, "Gerade aktualisiert")) }, 500)
+            return
+        }
+        refreshAt = now
+        refreshPending = true
+        main.removeCallbacks(refreshTimeout)
+        main.postDelayed(refreshTimeout, 25_000)
+        showSelected(refreshLocation = true, force = true)
+    }
+
+    private fun finishRefresh(note: String) {
+        if (!refreshPending) return
+        refreshPending = false
+        main.removeCallbacks(refreshTimeout)
+        forecastPage.refreshDone(note)
+    }
+
+    /** "Aktualisiert 21:20 · Station 21:00, nächste ca. 22:15" – die Stationen melden etwa stündlich. */
+    private fun refreshNote(f: Forecast?, prefix: String = "Aktualisiert"): String {
+        if (f == null) return prefix
+        val nowSec = System.currentTimeMillis() / 1000
+        val o = f.obs?.takeIf { it.fresh(nowSec) }
+        val station = if (o != null) " · Station ${f.hhmm(o.t)}, nächste ca. ${f.hhmm(o.t + 3600 + 15 * 60)}" else ""
+        return "$prefix ${f.hhmm(nowSec)}$station"
+    }
 
     override fun onSettings() {
         startActivity(Intent(this, SettingsActivity::class.java))

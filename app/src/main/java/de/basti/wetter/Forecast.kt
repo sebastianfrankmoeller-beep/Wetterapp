@@ -13,10 +13,28 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Kopie einer Stunde mit anderer Niederschlags- und Schneemenge. */
-fun Hour.withPrecip(mm: Double, snowCm: Double) = Hour(
-    t, temp, feels, humidity, mm, snowCm, code, cloud, wind, windDir, gust, isDay, pressure, prob, fromD2,
+fun Hour.withPrecip(mm: Double, snowCm: Double, newCode: Int = code) = Hour(
+    t, temp, feels, humidity, mm, snowCm, newCode, cloud, wind, windDir, gust, isDay, pressure, prob, fromD2,
     cape, lpi, flashes, snowDepth, snowLine, cloudLow, cloudMid, cloudHigh
 )
+
+/**
+ * Wettercode passend zu einer gemessenen/vorhergesagten Menge (mm/h): Stärke nach DWD
+ * (leicht < 2,5 · mäßig < 10 · stark), Regen oder Schauer, Niesel, Schnee.
+ * Gewitter und gefrierender Regen aus dem Modell bleiben erhalten.
+ */
+object RainCode {
+    fun of(mmh: Double, modelCode: Int, snowy: Boolean, showery: Boolean, drizzle: Boolean): Int {
+        if (modelCode >= 95 || modelCode in 56..57 || modelCode in 66..67) return modelCode
+        val lvl = RainRate.level(mmh).coerceIn(1, 3) - 1          // 0 leicht, 1 mäßig, 2 stark
+        return when {
+            snowy -> if (showery) (if (lvl >= 1) 86 else 85) else listOf(71, 73, 75)[lvl]
+            drizzle && mmh < 1.0 -> if (mmh < 0.5) 51 else 53
+            showery -> listOf(80, 81, 82)[lvl]
+            else -> listOf(61, 63, 65)[lvl]
+        }
+    }
+}
 
 /** Eine Stunde Vorhersage. Fehlende Werte sind NaN. */
 class Hour(
@@ -118,7 +136,8 @@ class Forecast(
     val elevation: Double = Double.NaN, // Höhe des Ortes in m
     val obs: Observation.Obs? = null,  // Messwerte der nächsten DWD-Station (Bright Sky)
     val nowcastNear: Map<Long, Double> = emptyMap(), // stärkste Radarzelle im Umkreis von 3 km (mm je 15 Min.)
-    val drizzle: Boolean = false       // Niesel-Lage: Radar sieht kaum etwas, Modell rechnet mit Niederschlag
+    val drizzle: Boolean = false,      // Niesel-Lage: Radar sieht kaum etwas, Modell rechnet mit Niederschlag
+    val steadyRain: Boolean = false    // laut Radar seit ca. 1 Stunde durchgehend und flächig nass (kein Schauer)
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -380,6 +399,7 @@ object WeatherApi {
         var radarUntil = 0L
         var near: Map<Long, Double> = emptyMap()
         var drizzle = false
+        var steady = false
         val obs = root.optJSONObject("obs")?.let { Observation.parse(it, ec.optDouble("elevation", Double.NaN)) }
         root.optJSONObject("radar")?.let { r ->
             near = RadarNowcast.slots(r, nearMax = true).filter { it.first + 900 > nowSec }.toMap()
@@ -394,6 +414,7 @@ object WeatherApi {
                 val stationWet = obs?.fresh(nowSec) == true && obs.farWet
                 val modelWet = modelNc.filterKeys { it < radarUntil }.values.any { it * 4 >= 0.1 }
                 drizzle = modelWet && (RadarNowcast.weakEcho(r, nowSec) || stationWet)
+                steady = RadarNowcast.steady(r, nowSec)
                 nowcast.clear()
                 nowcast.addAll(if (drizzle) slots.map { (t, v) -> t to maxOf(v, modelNc[t] ?: 0.0) } else slots)
                 nowcast.addAll(model)
@@ -412,7 +433,17 @@ object WeatherApi {
                 val keys = (from until h.t + 3600 step 900).toList()
                 if (keys.isEmpty() || keys.first() >= radarUntil || keys.any { it !in nc }) continue
                 val mm = keys.sumOf { nc[it]!! }
-                hours[i] = h.withPrecip(mm, if (nowcastSnowy) mm / 0.7 else 0.0)
+                // Symbol passend zur Menge: trocken → Bewölkung, nass → Regen/Schauer nach Stärke
+                val mmh = mm * 3600.0 / (keys.size * 900)
+                val code = when {
+                    h.code >= 95 -> h.code
+                    mmh < 0.1 -> if (h.code in 51..86) Sky.code(Sky.octas(h.cloudEff)) else h.code
+                    h.code in 51..86 || h.code in 0..4 || h.code == 45 || h.code == 48 ->
+                        RainCode.of(mmh, h.code, nowcastSnowy, showery = !steady && h.code in 80..86,
+                            drizzle = drizzle)
+                    else -> h.code
+                }
+                hours[i] = h.withPrecip(mm, if (nowcastSnowy) mm / 0.7 else 0.0, code)
             }
         }
 
@@ -436,7 +467,7 @@ object WeatherApi {
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
         return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
-            obs, near, drizzle)
+            obs, near, drizzle, steady)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {
@@ -563,23 +594,23 @@ object Fmt {
         45 -> "Nebel"
         48 -> "Nebel mit Reif"
         51 -> "Leichter Nieselregen"
-        53 -> "Nieselregen"
+        53 -> "Mäßiger Nieselregen"
         55 -> "Starker Nieselregen"
         56, 57 -> "Gefrierender Niesel"
         61 -> "Leichter Regen"
-        63 -> "Regen"
+        63 -> "Mäßiger Regen"
         65 -> "Starker Regen"
         66, 67 -> "Gefrierender Regen"
         68 -> "Schneeregen"
         71 -> "Leichter Schneefall"
-        73 -> "Schneefall"
+        73 -> "Mäßiger Schneefall"
         75 -> "Starker Schneefall"
         77 -> "Schneegriesel"
         80 -> "Leichte Schauer"
-        81 -> "Schauer"
+        81 -> "Mäßige Schauer"
         82 -> "Starke Schauer"
         85 -> "Schneeschauer"
-        86 -> "Starke Schneeschauer"
+        86 -> "Kräftige Schneeschauer"
         95 -> "Gewitter"
         96, 99 -> "Gewitter mit Hagel"
         else -> "–"
@@ -612,7 +643,8 @@ object RadarNowcast {
     /** Abfrage-Adresse (auch für den Datencheck). */
     fun url(p: Place): String {
         val now = System.currentTimeMillis() / 1000
-        val from = synchronized(ISO) { ISO.format(java.util.Date((now - 20 * 60) * 1000)) }
+        // 65 Minuten Vergangenheit: für "seit einer Stunde durchgehend Regen" (Regen statt Schauer)
+        val from = synchronized(ISO) { ISO.format(java.util.Date((now - 65 * 60) * 1000)) }
         val to = synchronized(ISO) { ISO.format(java.util.Date((now + 135 * 60) * 1000)) }
         val url = "https://api.brightsky.dev/radar?lat=%.4f&lon=%.4f&distance=4000&format=plain".format(Locale.US, p.lat, p.lon) +
             "&date=${Net.enc(from)}&last_date=${Net.enc(to)}"
@@ -626,6 +658,45 @@ object RadarNowcast {
             if (r != null) return r / 1000
         }
         return null
+    }
+
+    /**
+     * Landregen statt Schauer: In der letzten Stunde war es am Ort (3 × 3 km) fast durchgehend nass
+     * (höchstens ein trockenes 5-Minuten-Bild) und im Mittel der Großteil des Ausschnitts (≥ 60 %).
+     */
+    fun steady(root: JSONObject, nowSec: Long): Boolean {
+        val frames = root.optJSONArray("radar") ?: return false
+        val pos = root.opt("latlon_position")
+        var px = -1; var py = -1
+        when (pos) {
+            is JSONObject -> { px = pos.optDouble("x", -1.0).toInt(); py = pos.optDouble("y", -1.0).toInt() }
+            is JSONArray -> if (pos.length() >= 2) { px = pos.optDouble(0, -1.0).toInt(); py = pos.optDouble(1, -1.0).toInt() }
+        }
+        var n = 0; var wet = 0; var cover = 0.0
+        for (i in 0 until frames.length()) {
+            val f = frames.optJSONObject(i) ?: continue
+            val t = parseIso(f.optString("timestamp")) ?: continue
+            if (t > nowSec || t < nowSec - 3600) continue
+            val grid = f.optJSONArray("precipitation_5") ?: continue
+            val h = grid.length(); if (h == 0) continue
+            val w = grid.optJSONArray(0)?.length() ?: 0
+            val cx = if (px in 0 until w) px else w / 2
+            val cy = if (py in 0 until h) py else h / 2
+            var sum = 0.0; var cnt = 0; var all = 0; var wetPx = 0
+            for (y in 0 until h) {
+                val row = grid.optJSONArray(y) ?: continue
+                for (x in 0 until row.length()) {
+                    val v = row.optDouble(x, 0.0)
+                    all++; if (v > 0) wetPx++
+                    if (kotlin.math.abs(x - cx) <= 1 && kotlin.math.abs(y - cy) <= 1) { sum += v; cnt++ }
+                }
+            }
+            if (cnt == 0 || all == 0) continue
+            n++
+            if (sum / cnt >= 1.0) wet++                       // ≥ 0,01 mm je 5 Min. (≈ 0,1 mm/h)
+            cover += wetPx.toDouble() / all
+        }
+        return n >= 9 && wet >= n - 1 && cover / n >= 0.6
     }
 
     /**
