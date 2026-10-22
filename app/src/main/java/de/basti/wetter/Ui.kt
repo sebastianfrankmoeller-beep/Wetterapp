@@ -124,6 +124,61 @@ object Ui {
         Tone("Aubergine", 0xFF130B16.toInt(), 0xFF211627.toInt(), 0xFFF3EFF6.toInt(), 0xFFFDFBFE.toInt())
     )
 
+    /** Breite des neutralen Abschnitts am linken Ende des Hintergrund-Reglers. */
+    const val TONE_NEUTRAL = 24
+    const val TONE_MAX = TONE_NEUTRAL + 359
+
+    fun hueOf(color: Int): Int {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color, hsv)
+        return hsv[0].toInt().coerceIn(0, 359)
+    }
+
+    /** HSL → Farbe. */
+    fun hsl(h: Float, s: Float, l: Float): Int {
+        val c = (1 - kotlin.math.abs(2 * l - 1)) * s
+        val hp = ((h % 360) + 360) % 360 / 60f
+        val x = c * (1 - kotlin.math.abs(hp % 2 - 1))
+        val (r, g, b) = when (hp.toInt()) {
+            0 -> Triple(c, x, 0f); 1 -> Triple(x, c, 0f); 2 -> Triple(0f, c, x)
+            3 -> Triple(0f, x, c); 4 -> Triple(x, 0f, c); else -> Triple(c, 0f, x)
+        }
+        val m = l - c / 2
+        fun ch(v: Float) = ((v + m) * 255).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (ch(r) shl 16) or (ch(g) shl 8) or ch(b)
+    }
+
+    /**
+     * Akzentfarbe zu einem Farbton – Helligkeit so gewählt, dass sie lesbar bleibt:
+     * im Dunkelmodus hell und leuchtend, im Hellmodus kräftig und dunkel genug für weißen Grund.
+     */
+    fun accentFor(hue: Int, dark: Boolean): Int {
+        if (dark) {
+            var l = 0.62f
+            var c = hsl(hue.toFloat(), 0.85f, l)
+            while (luminance(c) < 0.30 && l < 0.80f) { l += 0.02f; c = hsl(hue.toFloat(), 0.85f, l) }
+            return c
+        }
+        var l = 0.46f
+        var c = hsl(hue.toFloat(), 0.80f, l)
+        while (luminance(c) > 0.20 && l > 0.22f) { l -= 0.02f; c = hsl(hue.toFloat(), 0.80f, l) }
+        return c
+    }
+
+    /** Hintergrundton zum Reglerwert (neutral oder dunkel/hell getönt). */
+    fun toneFor(v: Int): Tone {
+        if (v < TONE_NEUTRAL) return TONES[0]
+        val h = (v - TONE_NEUTRAL).toFloat()
+        return Tone("", hsl(h, 0.50f, 0.065f), hsl(h, 0.38f, 0.115f), hsl(h, 0.35f, 0.94f), hsl(h, 0.60f, 0.985f))
+    }
+
+    /** Farbe für die Reglerleiste (zeigt den Farbton deutlich, auch wenn der echte Ton sehr dunkel ist). */
+    fun toneSwatch(v: Int, dark: Boolean): Int =
+        if (v < TONE_NEUTRAL) (if (dark) 0xFF3A3D42.toInt() else 0xFFCFD2D6.toInt())
+        else hsl((v - TONE_NEUTRAL).toFloat(), 0.45f, if (dark) 0.32f else 0.80f)
+
+    fun tone(ctx: Context): Tone = toneFor(Prefs.toneValue(ctx))
+
     const val BG_NEUTRAL = 0
     const val BG_GRADIENT = 1
     const val BG_IMAGE = 2
@@ -182,16 +237,15 @@ object Ui {
         }
     }
 
-    private fun luminance(c: Int): Double {
+    fun luminance(c: Int): Double {
         fun ch(v: Int): Double { val x = v / 255.0; return if (x <= 0.03928) x / 12.92 else Math.pow((x + 0.055) / 1.055, 2.4) }
         return 0.2126 * ch((c shr 16) and 0xFF) + 0.7152 * ch((c shr 8) and 0xFF) + 0.0722 * ch(c and 0xFF)
     }
 
     /** Akzentfarbe, Hintergrundton und Glas-Effekt auf die Grundpalette anwenden. */
     fun customize(ctx: Context, base: Palette): Palette {
-        val acc = ACCENTS[Prefs.accent(ctx).coerceIn(0, ACCENTS.size - 1)]
-        val tone = TONES[Prefs.bgTone(ctx).coerceIn(0, TONES.size - 1)]
-        val accent = if (base.dark) acc.dark else acc.light
+        val tone = tone(ctx)
+        val accent = accentFor(Prefs.accentHue(ctx), base.dark)
         val onAccent = if (luminance(accent) > 0.4) 0xFF0B0C0E.toInt() else 0xFFFFFFFF.toInt()
         val bg = if (base.dark) tone.darkBg else tone.lightBg
         val surface0 = if (base.dark) tone.darkSurface else tone.lightSurface

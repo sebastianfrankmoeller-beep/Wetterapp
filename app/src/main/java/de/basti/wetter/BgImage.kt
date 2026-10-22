@@ -34,15 +34,7 @@ object BgImage {
 
     /** Übernimmt ein Bild aus der Galerie (Hintergrund-Thread). */
     fun import(ctx: Context, uri: Uri): Boolean {
-        val cr = ctx.contentResolver
-        // Größe ermitteln und grob verkleinert laden
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) } ?: return false
-        var sample = 1
-        while (max(o.outWidth, o.outHeight) / (sample * 2) >= 1200) sample *= 2
-        val src = cr.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-        } ?: return false
+        val src = decode(ctx, uri) ?: return false
 
         // Auf Bildschirmgröße zuschneiden (Hochformat) und weichzeichnen
         val dm = ctx.resources.displayMetrics
@@ -73,6 +65,47 @@ object BgImage {
         cached = null
         blurred.recycle()
         return true
+    }
+
+    /**
+     * Bild verkleinert laden (längste Seite höchstens ca. 2000 px), richtig gedreht.
+     * Ab Android 9 über ImageDecoder (kann auch HEIC-Fotos von Samsung), sonst BitmapFactory + EXIF.
+     */
+    private fun decode(ctx: Context, uri: Uri): Bitmap? {
+        val cr = ctx.contentResolver
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            val r = runCatching {
+                android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(cr, uri)) { dec, info, _ ->
+                    val w = info.size.width; val h = info.size.height
+                    val f = max(w, h) / 2000f
+                    if (f > 1f) dec.setTargetSize((w / f).roundToInt().coerceAtLeast(1), (h / f).roundToInt().coerceAtLeast(1))
+                    dec.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE   // nötig zum Zeichnen auf eine Canvas
+                }
+            }.getOrNull()
+            if (r != null) return r
+        }
+        // Größe ermitteln (decodeStream liefert hier absichtlich null – nur die Maße zählen)
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        var sample = 1
+        while (max(o.outWidth, o.outHeight) / (sample * 2) >= 1200) sample *= 2
+        val bmp = cr.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: return null
+        val deg = runCatching {
+            cr.openInputStream(uri)?.use {
+                when (android.media.ExifInterface(it).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1)) {
+                    android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                    android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                    android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                    else -> 0f
+                }
+            } ?: 0f
+        }.getOrDefault(0f)
+        if (deg == 0f) return bmp
+        val m = android.graphics.Matrix().apply { postRotate(deg) }
+        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true).also { if (it !== bmp) bmp.recycle() }
     }
 
     fun delete(ctx: Context) {

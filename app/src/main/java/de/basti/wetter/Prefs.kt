@@ -42,6 +42,26 @@ object Prefs {
 
     // ------------------------------------------------------------ Eigenes Aussehen
     fun accent(ctx: Context) = sp(ctx).getInt("st_accent", 0)
+
+    /** Akzent-Farbton 0–359°; ohne eigenen Wert der Ton der früher gewählten Vorgabe. */
+    fun accentHue(ctx: Context): Int {
+        val v = sp(ctx).getInt("st_hue", -1)
+        if (v >= 0) return v
+        val a = Ui.ACCENTS[accent(ctx).coerceIn(0, Ui.ACCENTS.size - 1)]
+        return Ui.hueOf(a.dark)
+    }
+
+    /** Hintergrundton auf dem Regler: 0 … < Ui.TONE_NEUTRAL = neutral, sonst Farbton (Wert − TONE_NEUTRAL). */
+    fun toneValue(ctx: Context): Int {
+        val v = sp(ctx).getInt("st_tone_v", -1)
+        if (v >= 0) return v
+        return when (bgTone(ctx)) {          // frühere Vorgaben übernehmen
+            2 -> Ui.TONE_NEUTRAL + Ui.hueOf(Ui.TONES[2].darkSurface)
+            3 -> Ui.TONE_NEUTRAL + Ui.hueOf(Ui.TONES[3].darkSurface)
+            4 -> Ui.TONE_NEUTRAL + Ui.hueOf(Ui.TONES[4].darkSurface)
+            else -> 0
+        }
+    }
     fun bgStyle(ctx: Context) = sp(ctx).getInt("st_bg", 0)
     fun bgTone(ctx: Context) = sp(ctx).getInt("st_tone", 0)
     fun bgVisibility(ctx: Context) = sp(ctx).getInt("st_vis", 50)
@@ -57,7 +77,7 @@ object Prefs {
 
     fun resetStyle(ctx: Context) {
         val e = sp(ctx).edit()
-        for (k in listOf("st_accent", "st_bg", "st_tone", "st_vis", "st_fsize", "st_fstyle", "st_corners")) e.remove(k)
+        for (k in listOf("st_accent", "st_hue", "st_tone_v", "st_bg", "st_tone", "st_vis", "st_fsize", "st_fstyle", "st_corners")) e.remove(k)
         e.putInt("st_version", styleVersion(ctx) + 1).apply()
     }
 

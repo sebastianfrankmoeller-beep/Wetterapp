@@ -162,7 +162,7 @@ class SettingsActivity : Activity() {
                 addView(LinearLayout(this@SettingsActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(Ui.tv(this@SettingsActivity, "14°", 34f, p.text).apply { typeface = Ui.TF_LIGHT })
-                    addView(Ui.tv(this@SettingsActivity, "Teils bewölkt", 13f, p.muted))
+                    addView(Ui.tv(this@SettingsActivity, "Wolkig", 13f, p.muted))
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
                 addView(pill("Aktiv", p.accent, p.onAccent) {})
                 addView(pill("Knopf", p.surfaceHi, p.text) {}, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
@@ -170,28 +170,15 @@ class SettingsActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4); bottomMargin = dp(12) }
         })
 
-        // Akzentfarbe: Farbtupfer
+        // Akzentfarbe: stufenloser Farbton-Regler
         rows.add(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(12))
             addView(Ui.tv(this@SettingsActivity, "Akzentfarbe", 16f, p.text, true))
-            addView(LinearLayout(this@SettingsActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(12), 0, 0)
-                val sel = Prefs.accent(this@SettingsActivity)
-                for ((i, a) in Ui.ACCENTS.withIndex()) {
-                    val c = if (p.dark) a.dark else a.light
-                    addView(View(this@SettingsActivity).apply {
-                        background = android.graphics.drawable.GradientDrawable().apply {
-                            shape = android.graphics.drawable.GradientDrawable.OVAL
-                            setColor(c)
-                            if (i == sel) setStroke(dp(3), p.text)
-                        }
-                        contentDescription = a.name
-                        setOnClickListener { Prefs.setStyle(this@SettingsActivity, "st_accent", i); restyle() }
-                    }, LinearLayout.LayoutParams(0, dp(30), 1f).apply { if (i > 0) leftMargin = dp(8) })
-                }
-            })
+            addView(ColorSlider(this@SettingsActivity, p, 359, Prefs.accentHue(this@SettingsActivity),
+                swatch = { Ui.accentFor(it, p.dark) }).apply {
+                onCommit = { v -> Prefs.setStyle(this@SettingsActivity, "st_hue", v); scrollView.post { restyle() } }
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
         })
 
         // Hintergrund
@@ -204,25 +191,14 @@ class SettingsActivity : Activity() {
                 if (v == Ui.BG_IMAGE && !BgImage.exists(this@SettingsActivity)) pickImage()
                 else { Prefs.setStyle(this@SettingsActivity, "st_bg", v); restyle() }
             })
-            // Ton (für Neutral und Verlauf; bei Bild die Abdunkelungsfarbe)
-            addView(LinearLayout(this@SettingsActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val sel = Prefs.bgTone(this@SettingsActivity)
-                for ((i, t) in Ui.TONES.withIndex()) {
-                    val c = if (p.dark) t.darkSurface else t.lightBg
-                    addView(LinearLayout(this@SettingsActivity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        gravity = Gravity.CENTER_HORIZONTAL
-                        addView(View(this@SettingsActivity).apply {
-                            background = Ui.rect(c, dpf(10), if (i == sel) p.accent else p.border, if (i == sel) dp(3) else 1)
-                        }, LinearLayout.LayoutParams(MATCH, dp(30)))
-                        addView(Ui.tv(this@SettingsActivity, t.name, 10.5f, if (i == sel) p.text else p.muted).apply {
-                            gravity = Gravity.CENTER; maxLines = 1
-                        }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) })
-                        setOnClickListener { Prefs.setStyle(this@SettingsActivity, "st_tone", i); restyle() }
-                    }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { if (i > 0) leftMargin = dp(6) })
-                }
-            })
+            // Ton (für Neutral und Verlauf; bei Bild die Abdunkelungsfarbe): links neutral, dann alle Farbtöne
+            addView(Ui.tv(this@SettingsActivity, if (bgStyle == Ui.BG_IMAGE) "Ton der Abdunkelung" else "Ton", 14f, p.text, true),
+                LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(14) })
+            addView(ColorSlider(this@SettingsActivity, p, Ui.TONE_MAX, Prefs.toneValue(this@SettingsActivity),
+                swatch = { Ui.toneSwatch(it, p.dark) },
+                thumb = { Ui.toneFor(it).let { t -> if (p.dark) t.darkSurface else t.lightBg } }).apply {
+                onCommit = { v -> Prefs.setStyle(this@SettingsActivity, "st_tone_v", v); scrollView.post { restyle() } }
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
             if (bgStyle == Ui.BG_IMAGE) {
                 addView(Ui.tv(this@SettingsActivity, "Bild sichtbar", 14f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(14) })
                 addView(android.widget.SeekBar(this@SettingsActivity).apply {

@@ -47,7 +47,7 @@ object WidgetRenderer {
         }
         Ui.applyStyle(ctx)
         // Akzentfarbe und Ton übernehmen; das Widget hat immer einen festen (nicht gläsernen) Hintergrund
-        return Ui.customize(ctx, base).copy(surface = Ui.TONES[Prefs.bgTone(ctx).coerceIn(0, Ui.TONES.size - 1)]
+        return Ui.customize(ctx, base).copy(surface = Ui.tone(ctx)
             .let { if (base.dark) it.darkSurface else it.lightSurface }, glass = false)
     }
 
