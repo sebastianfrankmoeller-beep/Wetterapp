@@ -1,0 +1,41 @@
+name: Datencheck
+
+# Rechnet die Auswertung der App mit festen Wetterlagen und echten Live-Daten durch.
+# Unabhängig vom APK-Build: ein Fehler hier verhindert keine APK.
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5,11,17 * * *"   # dreimal täglich mit dem aktuellen Wetter
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Datencheck
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:testDebugUnitTest --tests 'de.basti.wetter.DatenCheckTest' 2>&1 | tee test.log
+      - name: Bericht
+        if: always()
+        shell: bash
+        run: |
+          if [ -f app/build/datencheck.md ]; then cat app/build/datencheck.md >> "$GITHUB_STEP_SUMMARY"; fi
+          grep -E "FAILED|AssertionError|expected:<|Widersprüche" -A3 test.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Datencheck-Bericht
+          path: |
+            app/build/datencheck.md
+            app/build/reports/tests/
+          if-no-files-found: ignore

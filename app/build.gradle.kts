@@ -42,9 +42,19 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // Datencheck läuft ohne Gerät auf der JVM; Android-Aufrufe liefern dort Standardwerte
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all { it.testLogging { events("passed", "failed", "skipped"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL } }
+    }
 }
 
 dependencies {
     // Kartenanzeige (OpenStreetMap-Technik) für Radar und Wind
     implementation("org.osmdroid:osmdroid-android:6.1.20")
+
+    // Datencheck (nur für Tests): JUnit und echtes org.json statt der Android-Platzhalter
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
