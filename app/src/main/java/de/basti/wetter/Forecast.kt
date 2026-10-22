@@ -389,6 +389,8 @@ object WeatherApi {
         // Tage aus allen Stunden ab Mitternacht; angezeigt werden die Stunden ab jetzt
         val days = buildDays(hours, offset, sun)
         hours.removeAll { it.t < currentHour }
+        val obs = root.optJSONObject("obs")?.let { Observation.parse(it) }
+        Observation.adjust(hours, obs, nowSec)
 
         val uv = HashMap<Long, Double>()
         root.optJSONObject("uv")?.optJSONObject("hourly")?.let { u ->
@@ -396,7 +398,7 @@ object WeatherApi {
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
         return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
-            root.optJSONObject("obs")?.let { Observation.parse(it) })
+            obs)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {

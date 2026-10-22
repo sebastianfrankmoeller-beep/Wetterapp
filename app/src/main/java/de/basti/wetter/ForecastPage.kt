@@ -64,7 +64,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val feels = Ui.tv(ctx, "", 14f, p.muted)
     private val cloudLine = Ui.tv(ctx, "", 14f, p.muted)
     private val layersLine = Ui.tv(ctx, "", 12.5f, p.muted).apply { visibility = View.GONE; setLineSpacing(0f, 1.2f) }
-    private val sourceLine = Ui.tv(ctx, "", 12f, p.muted)
+    private val sourceLine = Ui.tv(ctx, "", 12f, p.muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
     private val hints = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
     private val statusActions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
     private val warnBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -300,13 +300,16 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         feels.text = "Gefühlt ${Fmt.temp(now.feels)}$hiLo"
         if (now.cloud.isNaN()) cloudLine.visibility = View.GONE else {
             cloudLine.visibility = View.VISIBLE
-            val src = if (now.cloudMeasured) "gemessen" else "Modell"
-            cloudLine.text = "Bewölkung ${Sky.label(now.cloud)} · $src" + if (now.layers != null) "  ›" else ""
+            val more = now.layers != null || now.sunInfo != null
+            cloudLine.text = "Bewölkung ${Sky.label(now.cloud)} · ${now.cloudSource}" + if (more) "  ›" else ""
         }
-        layersLine.text = now.layers?.let { l ->
-            val note = if (h0.thinHigh || (!h0.cloudHigh.isNaN() && h0.cloudHigh >= 30)) "\nHohe Schleierwolken zählen halb." else ""
-            "Schichten (Modell): $l$note"
-        } ?: ""
+        layersLine.text = listOfNotNull(
+            now.sunInfo,
+            now.layers?.let { l ->
+                val note = if (h0.thinHigh || (!h0.cloudHigh.isNaN() && h0.cloudHigh >= 30)) "\nHohe Schleierwolken zählen halb." else ""
+                "Schichten (Modell): $l$note"
+            }
+        ).joinToString("\n")""
         if (layersLine.text.isEmpty()) layersLine.visibility = View.GONE
         sourceLine.text = now.source
         sourceLine.setTextColor(if (now.obs != null) p.accent else p.muted)
@@ -364,13 +367,17 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             nowcastSub.visibility = if (sub.isEmpty()) View.GONE else View.VISIBLE
         } else nowcastCard.visibility = View.GONE
 
+        val samePlace = lastForecast?.place?.id == f.place.id
         lastForecast = f
         rebindRun()
 
         hourly.forecast = f
-        days.selected = -1
         days.forecast = f
-        hourlyScroll.scrollTo(0, 0)
+        // Nur bei Ortswechsel an den Anfang springen (Messwert-Aktualisierung lässt die Ansicht stehen)
+        if (!samePlace) {
+            days.selected = -1
+            hourlyScroll.scrollTo(0, 0)
+        }
 
         val models = if (f.hasD2) "DWD ICON-D2 (2 km) bis 48 h, danach ECMWF IFS (9 km)" else "ECMWF IFS (9 km)"
         footer.text = "Modelle: $models\nDaten: Open-Meteo · Stand ${f.hhmmLocal(f.fetchedAt)}"
@@ -387,8 +394,9 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             val cloud = now?.cloud ?: h.cloudEff
             if (!cloud.isNaN()) {
                 append("\n\nBewölkung ${Sky.label(cloud)}")
-                if (now?.cloudMeasured == true) append(" · gemessen")
+                if (now != null) append(" · ${now.cloudSource}")
             }
+            now?.sunInfo?.let { append("\n$it") }
             Sky.layers(h.cloudLow, h.cloudMid, h.cloudHigh)?.let {
                 append("\nSchichten (Modell): $it")
                 if (h.thinHigh || h.cloudHigh >= 30) append("\nHohe Schleierwolken zählen halb.")

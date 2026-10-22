@@ -11,11 +11,13 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   Langes Drücken auf einen Favoriten: verschieben oder entfernen.
   Erneutes Antippen des gewählten Ortes lädt neu.
 - **Jetzt**: Temperatur, gefühlt, Wind/Böen mit Richtung, Feuchte, Luftdruck – **gemessen an der nächsten
-  DWD-Station** (Bright Sky, bis 25 km, Messung max. 90 Min. alt), mit Quelle und Uhrzeit
-  („gemessen · Station Flensburg 11:20“); ohne Station in der Nähe Modellwerte
-- **Bewölkung in Achteln und Prozent** („Bewölkung 5/8 (63 %) · gemessen“). Antippen zeigt die Schichten
-  tief / mittel / hoch (Modell). Zustand nach echten Stufen: 0/8 klar, 1–2 sonnig, 3–5 wolkig,
-  6–7 stark bewölkt, 8/8 bedeckt. Hohe, dünne Schleierwolken zählen nur halb („… mit Aufheiterungen“)
+  DWD-Station** (Bright Sky, bis 25 km), mit Quelle und Uhrzeit („gemessen 14:00 · Glücksburg-Meierwik (3 km)“).
+  Messwerte werden beim Öffnen und alle 5 Minuten nachgeladen (ohne Open-Meteo-Kontingent);
+  Lauf-Check und Stundenstreifen übernehmen die gemessene Abweichung (bis +2 Std. auslaufend)
+- **Bewölkung in Achteln und Prozent** – gemessen an Stationen bis 60 km („4/8 (50 %) · gemessen Schleswig, 32 km“),
+  sonst Modell. **Sonne gemessen** (Einstrahlung der letzten 10 Min. gegenüber wolkenlos, sonst Sonnenscheindauer):
+  0/8 klar · 1–2 sonnig · 3–5 wolkig bzw. „Sonnig, teils wolkig“ · 6–7 stark bewölkt bzw. „Wolkig mit Sonne“ · 8/8 bedeckt.
+  Antippen zeigt Sonne und Schichten tief / mittel / hoch (Modell)
 - **Stundenstreifen antippen**: Details der Stunde (Zustand, Bewölkung mit Schichten, Regen, Wind)
 - **Regen der nächsten 3 Stunden**: die ersten 2 Stunden aus dem **DWD-Radar** (Messung + Radar-Nowcast, 1 km,
   über Bright Sky), danach DWD ICON-D2. „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,

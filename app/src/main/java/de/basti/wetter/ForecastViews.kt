@@ -118,6 +118,7 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         val first = max(0, (clip.left / colW).toInt() - 1)
         val last = min(hs.size - 1, (clip.right / colW).toInt() + 1)
 
+        val nowCode = f.current()?.code ?: hs[0].code   // "Jetzt" wie in der Jetzt-Karte
         val minT = hs.minOf { it.temp }
         val maxT = hs.maxOf { it.temp }
         val span = max(4.0, maxT - minT)
@@ -180,7 +181,7 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
             c.drawText(if (i == 0) "Jetzt" else "%02d".format(f.hour(hr.t)), cx, yHour, text)
 
             // Symbol (+ Blitz-Abzeichen bei Gewitterrisiko)
-            WeatherIcons.draw(c, hr.code, hr.isDay, cx, yIcon, iconSize, p)
+            WeatherIcons.draw(c, if (i == 0) nowCode else hr.code, hr.isDay, cx, yIcon, iconSize, p)
             if (hr.thunder >= 1) WeatherIcons.boltBadge(c, cx + 15 * d, yIcon - 12 * d, 13 * d, thunderColor(hr.thunder, p), p.surface)
 
             // Temperaturpunkt + Wert

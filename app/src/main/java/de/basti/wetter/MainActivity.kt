@@ -310,6 +310,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
             main.post {
                 if (my != loadSeq) return@post
                 res.onSuccess { (f, raw) ->
+                    obsAt = System.currentTimeMillis()   // Messwerte sind in der Vorhersage schon enthalten
                     Prefs.setCache(this, key, raw)
                     bind(f)
                     forecastPage.showStatus(null)
@@ -321,6 +322,47 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                         listOf("Erneut versuchen" to { load(place, sel, true) })
                     )
                 }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ Messwerte
+
+    private var obsAt = 0L
+    private val obsTick = object : Runnable {
+        override fun run() {
+            refreshObs()
+            main.postDelayed(this, OBS_EVERY)
+        }
+    }
+
+    /**
+     * Nur die Stationsmessung neu holen (Bright Sky, kein Open-Meteo-Kontingent) und in die
+     * gespeicherten Daten einsetzen – höchstens alle 5 Minuten, ohne die Vorhersage neu zu laden.
+     */
+    private fun refreshObs(force: Boolean = false) {
+        val f = shown ?: return
+        val sel = currentPlace() ?: return
+        // Gezeigter Ort muss noch der gewählte sein (Standort darf sich leicht verschoben haben)
+        if (distKm(f.place.lat, f.place.lon, sel.lat, sel.lon) > 2.0) return
+        val place = f.place
+        if (!RadarNowcast.covers(place.lat, place.lon)) return
+        if (!force && System.currentTimeMillis() - obsAt < OBS_EVERY - 5_000) return
+        obsAt = System.currentTimeMillis()
+        val key = cacheKey(Prefs.selected(this), place)
+        io.execute {
+            val raw = Observation.fetchRaw(place) ?: return@execute
+            val obsJson = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return@execute
+            main.post {
+                if (shown?.place?.id != place.id) return@post
+                val cached = Prefs.cache(this, key) ?: return@post
+                // Zwischenspeicher muss zu genau diesem Ort gehören
+                if (runCatching { org.json.JSONObject(cached).optLong("at") }.getOrNull() != shown?.fetchedAt) return@post
+                val merged = runCatching { org.json.JSONObject(cached).put("obs", obsJson).toString() }.getOrNull() ?: return@post
+                val nf = runCatching { WeatherApi.parse(place, merged) }.getOrNull() ?: return@post
+                Prefs.setCache(this, key, merged)
+                shown = nf
+                forecastPage.bind(nf)
             }
         }
     }
@@ -495,10 +537,14 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         if (f != null && System.currentTimeMillis() - f.fetchedAt > 15 * 60_000) {
             showSelected(refreshLocation = Prefs.selected(this) == Prefs.CURRENT)
         }
+        // Messwerte: beim Öffnen (wenn älter als 5 Min.) und danach alle 5 Minuten
+        main.removeCallbacks(obsTick)
+        main.post(obsTick)
     }
 
     override fun onPause() {
         super.onPause()
+        main.removeCallbacks(obsTick)
         radarPage?.onPause()
         windPage?.onPause()
     }
@@ -519,6 +565,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     }
 
     companion object {
+        private const val OBS_EVERY = 5 * 60_000L
         private const val REQ_LOC = 7
         private const val REQ_NOTIF = 8
         const val EXTRA_PLACE = "place"
