@@ -21,6 +21,7 @@ import org.json.JSONObject
 class WeatherWidget : AppWidgetProvider() {
 
     override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) {
+        de.basti.wetter.Usage.init(ctx)
         val pending = goAsync()
         Thread {
             try {

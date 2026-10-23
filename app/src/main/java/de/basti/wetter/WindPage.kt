@@ -77,11 +77,51 @@ class WindGrid(
         return true
     }
 
+    /** Grobe Europa-Übersicht für alles außerhalb dieses Gitters (null = keine). */
+    @Volatile var fallback: WindGrid? = null
+
+    private fun fbHour(h: Int): Int {
+        val fb = fallback ?: return 0
+        val t = times[h.coerceIn(0, times.size - 1)]
+        return fb.times.indexOfLast { it <= t }.coerceAtLeast(0)
+    }
+
+    /** Wie [at], außerhalb des Gitters aus der Übersicht. */
+    fun atAny(h: Int, lat: Double, lon: Double, out: FloatArray): Boolean =
+        at(h, lat, lon, out) || (fallback?.at(fbHour(h), lat, lon, out) ?: false)
+
+    fun gustAny(h: Int, lat: Double, lon: Double): Float =
+        sample(gust, h, lat, lon).takeIf { !it.isNaN() } ?: fallback?.let { it.sample(it.gust, fbHour(h), lat, lon) } ?: Float.NaN
+
+    fun thunderAny(h: Int, lat: Double, lon: Double): Float =
+        sample(thunder, h, lat, lon).takeIf { !it.isNaN() } ?: fallback?.let { it.sample(it.thunder, fbHour(h), lat, lon) } ?: Float.NaN
+
     fun covers(bb: BoundingBox): Boolean =
         bb.latSouth >= south && bb.latNorth <= north && bb.lonWest >= west && bb.lonEast <= east
 
     companion object {
         /** Lädt ein Gitter (nx × ny Punkte) für den Ausschnitt; 48 Stunden ab jetzt. */
+        /** Lädt ein Gitter genau für das Gebiet (ohne Rand) – z. B. die Europa-Übersicht. Rohtext zum Zwischenspeichern. */
+        fun fetchArea(s: Double, n: Double, w: Double, e: Double, nx: Int, ny: Int): Pair<WindGrid, String> {
+            val body = Net.get(url(s, n, w, e, nx, ny), 25000)
+            return parse(body, s, n, w, e, nx, ny) to body
+        }
+
+        private fun url(s: Double, n: Double, w: Double, e: Double, nx: Int, ny: Int): String {
+            val lats = StringBuilder()
+            val lons = StringBuilder()
+            for (j in 0 until ny) for (i in 0 until nx) {
+                val lat = n - (n - s) * j / (ny - 1)
+                val lon = w + (e - w) * i / (nx - 1)
+                if (lats.isNotEmpty()) { lats.append(','); lons.append(',') }
+                lats.append("%.3f".format(Locale.US, lat))
+                lons.append("%.3f".format(Locale.US, lon))
+            }
+            return "https://api.open-meteo.com/v1/forecast?latitude=$lats&longitude=$lons" +
+                "&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,lightning_potential,cape&models=icon_seamless" +
+                "&forecast_hours=48&timeformat=unixtime&timezone=GMT"
+        }
+
         fun fetch(bb: BoundingBox): WindGrid {
             // Ausschnitt etwas größer laden, damit kleines Verschieben keinen Neuabruf braucht
             val padLat = (bb.latNorth - bb.latSouth) * 0.35
@@ -93,19 +133,10 @@ class WindGrid(
             // 7 × 9 Punkte: reicht für die glatten Windfelder, schont das Abruf-Kontingent
             val nx = 7
             val ny = 9
-            val lats = StringBuilder()
-            val lons = StringBuilder()
-            for (j in 0 until ny) for (i in 0 until nx) {
-                val lat = n - (n - s) * j / (ny - 1)
-                val lon = w + (e - w) * i / (nx - 1)
-                if (lats.isNotEmpty()) { lats.append(','); lons.append(',') }
-                lats.append("%.3f".format(Locale.US, lat))
-                lons.append("%.3f".format(Locale.US, lon))
-            }
-            val url = "https://api.open-meteo.com/v1/forecast?latitude=$lats&longitude=$lons" +
-                "&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,lightning_potential,cape&models=icon_seamless" +
-                "&forecast_hours=48&timeformat=unixtime&timezone=GMT"
-            val body = Net.get(url, 25000)
+            return fetchArea(s, n, w, e, nx, ny).first
+        }
+
+        fun parse(body: String, s: Double, n: Double, w: Double, e: Double, nx: Int, ny: Int): WindGrid {
             val arr: JSONArray = if (body.trimStart().startsWith("[")) JSONArray(body) else JSONArray().put(JSONObject(body))
             val first = arr.getJSONObject(0).getJSONObject("hourly")
             val tArr = first.getJSONArray("time")
@@ -273,15 +304,15 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
         for (r in 0 until rows) for (c in 0 until cols) {
             val i = r * cols + c
             val geo = pj.fromPixels(c * cell, r * cell, gp)
-            if (g.at(hr, geo.latitude, geo.longitude, tmp)) {
+            if (g.atAny(hr, geo.latitude, geo.longitude, tmp)) {
                 fu[i] = tmp[0] * k
                 fv[i] = -tmp[1] * k
                 val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
                 fs[i] = s
                 colorsArr[i] = when (layer) {
                     Layer.WIND -> Ui.withAlpha(WindColors.of(s), 78)
-                    Layer.GUST -> Ui.withAlpha(WindColors.of(g.sample(g.gust, hr, geo.latitude, geo.longitude)), 78)
-                    Layer.THUNDER -> ThunderColors.of(g.sample(g.thunder, hr, geo.latitude, geo.longitude))
+                    Layer.GUST -> Ui.withAlpha(WindColors.of(g.gustAny(hr, geo.latitude, geo.longitude)), 78)
+                    Layer.THUNDER -> ThunderColors.of(g.thunderAny(hr, geo.latitude, geo.longitude))
                 }
             } else {
                 fu[i] = 0f; fv[i] = 0f; fs[i] = Float.NaN
@@ -340,11 +371,11 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
             val i = ex.times.indexOfLast { it <= g.times[h] }
             if (i >= 0) return Values(ex.speed[i], ex.dir[i], ex.gust[i], ex.thunder[i])
         }
-        if (!g.at(h, geo.latitude, geo.longitude, tmp)) return null
+        if (!g.atAny(h, geo.latitude, geo.longitude, tmp)) return null
         val s = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1])
         var deg = Math.toDegrees(kotlin.math.atan2(-tmp[0].toDouble(), -tmp[1].toDouble())).toFloat()
         if (deg < 0) deg += 360f
-        return Values(s, deg, g.sample(g.gust, h, geo.latitude, geo.longitude), g.sample(g.thunder, h, geo.latitude, geo.longitude))
+        return Values(s, deg, g.gustAny(h, geo.latitude, geo.longitude), g.thunderAny(h, geo.latitude, geo.longitude))
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
@@ -490,6 +521,11 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private val main = Handler(Looper.getMainLooper())
     private var fetching = false
     private var lastBox: BoundingBox? = null
+    private val banner = Ui.tv(ctx, "", 13f, p.text, true).apply {
+        setPadding(Ui.dp(ctx, 14), Ui.dp(ctx, 10), Ui.dp(ctx, 14), Ui.dp(ctx, 10))
+        background = Ui.rect(Ui.mix(p.surface, p.warn, 0.22f), Ui.dpf(ctx, 16), Ui.withAlpha(p.warn, 160), 1)
+        visibility = View.GONE
+    }
 
     private val refetch = Runnable { ensureData() }
 
@@ -555,6 +591,8 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             setShadowLayer(4f, 0f, 0f, p.bg)
         }, LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(18), dp(4)) })
 
+        addView(banner, LayoutParams(MATCH, WRAP, Gravity.TOP).apply { setMargins(dp(12), dp(66), dp(12), 0) })
+
         timeline.onChange = { setHour(it) }
         setLayer(WindOverlay.Layer.WIND)
         map.post { ensureData() }
@@ -589,6 +627,75 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     private var lastFetchAt = 0L
     private val cache = ArrayList<Pair<BoundingBox, WindGrid>>()   // zuletzt geladene Ausschnitte
 
+    // ------------------------------------------------ Europa-Übersicht (grob, alle 3 Stunden)
+
+    private val baseS = 34.0; private val baseN = 72.0; private val baseW = -25.0; private val baseE = 45.0
+    private val baseBox = BoundingBox(baseN, baseE, baseS, baseW)
+    private var base: WindGrid? = null
+    private var baseAt = 0L
+    private var baseLoading = false
+    private var baseFailedAt = 0L
+    private val baseFile get() = java.io.File(context.filesDir, "wind_uebersicht.json")
+
+    /** Feiner Ausschnitt erst ab dieser Zoomstufe (etwa Bundesland); darunter reicht die Übersicht. */
+    private val DETAIL_ZOOM = 6.0
+
+    private fun ensureBase() {
+        if (baseLoading) return
+        val fresh = base != null && System.currentTimeMillis() - baseAt < 3 * 3600_000L
+        if (fresh) return
+        if (System.currentTimeMillis() - baseFailedAt < 60_000) return
+        baseLoading = true
+        Thread {
+            // erst aus dem Speicher (überlebt App-Neustarts), sonst neu laden
+            var grid: WindGrid? = null
+            var at = 0L
+            runCatching {
+                val o = org.json.JSONObject(baseFile.readText())
+                at = o.getLong("at")
+                if (System.currentTimeMillis() - at < 3 * 3600_000L)
+                    grid = WindGrid.parse(o.getString("body"), baseS, baseN, baseW, baseE, o.getInt("nx"), o.getInt("ny"))
+            }
+            var err: Throwable? = null
+            if (grid == null) {
+                val res = runCatching { WindGrid.fetchArea(baseS, baseN, baseW, baseE, 12, 10) }
+                res.onSuccess { (g, body) ->
+                    grid = g; at = System.currentTimeMillis()
+                    runCatching {
+                        baseFile.writeText(org.json.JSONObject().put("at", at).put("nx", 12).put("ny", 10).put("body", body).toString())
+                    }
+                }.onFailure { err = it }
+            }
+            main.post {
+                baseLoading = false
+                val g = grid
+                if (g == null) {
+                    baseFailedAt = System.currentTimeMillis()
+                    showLimit(err)
+                    return@post
+                }
+                base = g; baseAt = at
+                // als Grundlage unter den feinen Ausschnitt legen bzw. allein zeigen
+                val cur = overlay.grid
+                if (cur == null || cur.fallback == null && lastBox == baseBox) applyGrid(baseBox, g)
+                else { cur.fallback = g; overlay.moved(); map.invalidate() }
+                for ((_, c) in cache) c.fallback = g
+                ensureData()
+            }
+        }.start()
+    }
+
+    /** Deutlicher Hinweis auf der Karte bei Abruflimit bzw. Sparbetrieb. */
+    private fun showLimit(e: Throwable?) {
+        val limit = (e?.message ?: "").contains("limit", ignoreCase = true)
+        banner.text = when {
+            limit -> "Tageslimit von Open-Meteo erreicht – Windkarte morgen wieder vollständig"
+            Usage.saving() -> "Sparbetrieb: nur grobe Übersicht (Tageskontingent fast aufgebraucht)"
+            else -> ""
+        }
+        banner.visibility = if (banner.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+    }
+
     /** Passt ein Gitter zum aktuellen Ausschnitt (deckt ihn ab, nicht viel zu grob, nicht veraltet)? */
     private fun fits(box: BoundingBox, g: WindGrid, bb: BoundingBox): Boolean {
         val tooCoarse = (bb.latNorth - bb.latSouth) < (box.latNorth - box.latSouth) / 3.5
@@ -597,19 +704,31 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
     }
 
     private fun ensureData() {
-        if (fetching || map.width == 0) return
+        if (map.width == 0) return
+        ensureBase()
+        if (fetching) return
         val bb = map.boundingBox
+        // Herausgezoomt oder im Sparbetrieb: Übersicht genügt
+        if (map.zoomLevelDouble < DETAIL_ZOOM || Usage.saving()) {
+            showLimit(null)
+            val b = base
+            if (b != null && overlay.grid !== b) applyGrid(baseBox, b)
+            return
+        }
         val g = overlay.grid
         val last = lastBox
-        if (g != null && last != null && fits(last, g, bb)) return
+        if (g != null && last != null && last != baseBox && fits(last, g, bb)) return
         // Bereits geladenen Ausschnitt wiederverwenden
         cache.lastOrNull { fits(it.first, it.second, bb) }?.let { (box, grid) ->
+            grid.fallback = base
             applyGrid(box, grid)
             return
         }
-        // Höchstens alle 30 s neu laden (Abruf-Kontingent schonen)
-        val wait = 30_000 - (System.currentTimeMillis() - lastFetchAt)
-        if (g != null && wait > 0) {
+        // Bis der feine Ausschnitt da ist, die Übersicht zeigen (keine Lücke)
+        base?.let { b -> if (overlay.grid !== b && (g == null || !g.covers(bb))) applyGrid(baseBox, b) }
+        // Höchstens alle 10 s neu laden (Minutenlimit 600, ein Ausschnitt zählt 63)
+        val wait = 10_000 - (System.currentTimeMillis() - lastFetchAt)
+        if (wait > 0) {
             main.removeCallbacks(refetch)
             main.postDelayed(refetch, wait)
             return
@@ -622,11 +741,16 @@ class WindPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fram
             main.post {
                 fetching = false
                 res.onSuccess { grid ->
+                    grid.fallback = base
                     cache.add(bb to grid)
                     while (cache.size > 6) cache.removeAt(0)
                     applyGrid(bb, grid)
+                    showLimit(null)
+                    // Wurde die Karte während des Ladens bewegt? Dann gleich den neuen Ausschnitt prüfen
+                    main.post { ensureData() }
                 }.onFailure { e ->
                     val limit = (e.message ?: "").contains("limit", ignoreCase = true)
+                    showLimit(e)
                     subLabel.text = when {
                         overlay.grid != null && limit -> "Abruflimit erreicht – zeige vorhandene Daten"
                         overlay.grid != null -> "Aktualisierung fehlgeschlagen – zeige vorhandene Daten"

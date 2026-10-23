@@ -272,7 +272,9 @@ class Current(
     val sunInfo: String?,        // "Sonne: 30 von 30 Min. (Schleswig)"
     val layers: String?,         // Schichten aus dem Modell
     val obs: Observation.Obs?,   // gesetzt, wenn Messwerte verwendet werden
-    val source: String           // "gemessen 14:00 · Glücksburg-Meierwik (3 km)" bzw. "Modell DWD ICON-D2"
+    val source: String,          // "gemessen 14:00 · Glücksburg-Meierwik (3 km)" bzw. "Modell DWD ICON-D2"
+    val visLine: String? = null, // "Sicht 700 m · Nebel · gemessen 09:00" (nur unter 10 km)
+    val fog: Fog.State? = null
 )
 
 /**
@@ -335,8 +337,8 @@ fun Forecast.current(): Current? {
     val octas = Sky.octas(cloud)
     val (skyCode, skyText) = skyState(if (cloudMeasured || sunny != null) octas else -1, sunny, h.isDay)
     val p60 = o?.precip60?.takeIf { !it.isNaN() } ?: 0.0
-    val code: Int
-    val text: String
+    var code: Int
+    var text: String
     // Regen/Schnee/trocken: Liegt Radar für jetzt vor (alle 5 Min.), entscheidet das Radar –
     // die Stationsmeldung ist bis zu einer Stunde alt. Gewitter, Hagel, Nebel meldet nur die Station.
     val radarNow = slotNow != null && slotNow.first < nowcastRadarUntil
@@ -366,6 +368,29 @@ fun Forecast.current(): Current? {
         }
     }
 
+    // Nebel/Dunst: nur wenn gerade nichts fällt (Zustand aus Bewölkung bzw. Modell-Nebel)
+    val fog = Fog.state(this, nowSec)
+    var visLine: String? = null
+    if (fog != null) {
+        if (code in 0..4 || code == 45 || code == 48) {
+            // Himmel ohne Nebel (für "…, örtlich Nebel möglich" bzw. wenn die Messung keinen Nebel zeigt)
+            val skyOnly = if (code in 0..4) text else if (skyCode >= 0) skyText
+                else Sky.describe(Sky.code(Sky.octas(h.cloudEff)), h.isDay, h.thinHigh)
+            val skyOnlyCode = if (code in 0..4) code else if (skyCode >= 0) skyCode else Sky.code(Sky.octas(h.cloudEff))
+            when {
+                fog.visM < 200 -> { code = 45; text = "Dichter Nebel" }
+                fog.visM < 1000 -> { code = 45; text = "Nebel" }
+                fog.likely -> { code = 45; text = "$skyOnly, örtlich Nebel möglich" }
+                // Modell/MOSMIX meint Nebel, gemessen ist aber gute Sicht → Messung gilt
+                code == 45 || code == 48 -> { code = skyOnlyCode; text = skyOnly }
+            }
+        }
+        if (fog.visM < 10000 || fog.likely) {
+            visLine = "Sicht ${Fog.dist(fog.visM)}" + (if (fog.label.isNotEmpty()) " · ${fog.label}" else "") +
+                " · gemessen ${hhmm(fog.visT)}" + (if (fog.likely) " · örtlich dichter Nebel möglich" else "")
+        }
+    }
+
     val source = if (o != null && !o.temp.isNaN()) "gemessen ${hhmm(o.t)} · ${o.station} (${km(o.distKm)})"
     else "Modell ${if (h.fromD2) "DWD ICON-D2" else "ECMWF IFS"}"
     return Current(
@@ -374,6 +399,6 @@ fun Forecast.current(): Current? {
         humidity = m(o?.humidity, h.humidity), pressure = m(o?.pressure, h.pressure),
         cloud = cloud, cloudMeasured = cloudMeasured, cloudSource = cloudSource, sunInfo = sunInfo,
         layers = Sky.layers(h.cloudLow, h.cloudMid, h.cloudHigh),
-        obs = o, source = source
+        obs = o, source = source, visLine = visLine, fog = fog
     )
 }

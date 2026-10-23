@@ -18,6 +18,10 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   sonst Modell. **Sonne gemessen** (Einstrahlung der letzten 10 Min. gegenüber wolkenlos, sonst Sonnenscheindauer):
   0/8 klar · 1–2 sonnig · 3–5 wolkig bzw. „Sonnig, teils wolkig“ · 6–7 stark bewölkt bzw. „Wolkig mit Sonne“ · 8/8 bedeckt.
   Antippen zeigt Sonne und Schichten tief / mittel / hoch (Modell)
+- **Nebel und Sicht**: gemessene Sichtweite der DWD-Station (stündlich) – „Sicht 700 m · Nebel · gemessen 09:00“;
+  unter 1 km „Nebel“, unter 200 m „Dichter Nebel“. Bei sehr feuchter, windstiller Luft und abnehmender Sicht
+  „örtlich Nebel möglich“ (Nebel ist oft örtlicher als die Station). Nebel-/Dunst-Vorhersage aus DWD-MOSMIX
+  („Nebel möglich ca. 6–10 Uhr“), Nebelsymbol im Stundenstreifen, Hinweis im Lauf-Check
 - **Stundenstreifen antippen**: Details der Stunde (Zustand, Bewölkung mit Schichten, Regen, Wind)
 - **Regen der nächsten 3 Stunden**: die ersten 2 Stunden aus dem **DWD-Radar** (Messung + Radar-Nowcast, 1 km,
   über Bright Sky), danach DWD ICON-D2. „Regen in 25 Min.“, Kurve mit Stufen leicht / mäßig / stark,
@@ -40,6 +44,8 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   (nur Messungen, gröber). Küsten, Grenzen und Ortsnamen liegen über dem Radar; **Deckkraft-Regler** im Bedienfeld. Zuschaltbare **Warnkarte** mit Legende –
   Karte antippen zeigt die Warnungen an dieser Stelle
 - **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
+  Grobe **Europa-Übersicht** (alle 3 Std.) als Grundlage, beim Hineinzoomen feiner Ausschnitt darüber.
+  Die App zählt ihren Open-Meteo-Verbrauch; ab 7.000 am Tag nur noch Übersicht (Hinweis auf der Karte).
   Karte antippen zeigt Wind, Richtung, Böen (und Gewitterrisiko) an dieser Stelle
 - **Lauf-Check** (siehe unten)
 - **Fahrmodus** mit Google Maps (siehe unten)
@@ -59,6 +65,11 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 
 ## Lauf-Check
+
+Der Lauf-Check nutzt nur Daten, die die App ohnehin zeigt: die nächsten 2 Stunden aus Regenkarte und Jetzt-Werten,
+alles danach aus dem Stundenstreifen (Symbol, Menge, Regenwahrscheinlichkeit). Texte abgestuft, z. B.
+„Meist trocken, kurzer Schauer um ca. 12:30“, „Leichter Regen, kurze Pause ca. 12:30–12:45“,
+„Wechselhaft – immer wieder leichter Regen“, darunter „Danach weiter leichter Niesel, trocken ab ca. 18:00“.
 
 Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer für die **nächsten 2 Stunden**:
 

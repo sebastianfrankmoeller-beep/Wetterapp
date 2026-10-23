@@ -137,7 +137,8 @@ class Forecast(
     val obs: Observation.Obs? = null,  // Messwerte der nächsten DWD-Station (Bright Sky)
     val nowcastNear: Map<Long, Double> = emptyMap(), // stärkste Radarzelle im Umkreis von 3 km (mm je 15 Min.)
     val drizzle: Boolean = false,      // Niesel-Lage: Radar sieht kaum etwas, Modell rechnet mit Niederschlag
-    val steadyRain: Boolean = false    // laut Radar seit ca. 1 Stunde durchgehend und flächig nass (kein Schauer)
+    val steadyRain: Boolean = false,   // laut Radar seit ca. 1 Stunde durchgehend und flächig nass (kein Schauer)
+    val vis: List<Fog.Pt> = emptyList() // Sichtweite: Stationsmessung (stündlich) + DWD-MOSMIX-Vorhersage
 ) {
     /** Stunde, die "jetzt" am besten beschreibt. */
     val now: Hour? get() = hours.firstOrNull()
@@ -193,6 +194,7 @@ object Net {
         con.setRequestProperty("User-Agent", UA)
         // Komprimiert anfordern (Bright Sky verlangt das für Radardaten) und selbst entpacken
         con.setRequestProperty("Accept-Encoding", "gzip")
+        Usage.count(url)
         try {
             val code = con.responseCode
             val raw = if (code in 200..299) con.inputStream else con.errorStream
@@ -255,19 +257,22 @@ object WeatherApi {
         var uv: String? = null
         var radar: String? = null
         var obs: String? = null
+        var vis: String? = null
         val t = Thread { d2 = runCatching { Net.get(d2Url) }.getOrNull() }
         val tu = Thread { uv = runCatching { Net.get(uvUrl, 8000) }.getOrNull() }
         val tr = Thread { radar = RadarNowcast.fetchRaw(p) }
         val to = Thread { obs = Observation.fetchRaw(p) }
-        t.start(); tu.start(); tr.start(); to.start()
+        val tv = Thread { vis = Fog.fetchRaw(p) }
+        t.start(); tu.start(); tr.start(); to.start(); tv.start()
         val ec = Net.get(ecUrl)
-        t.join(20000); tu.join(10000); tr.join(12000); to.join(10000)
+        t.join(20000); tu.join(10000); tr.join(12000); to.join(10000); tv.join(10000)
         return JSONObject()
             .put("ec", JSONObject(ec))
             .put("d2", d2?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("uv", uv?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("radar", radar?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("obs", obs?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
+            .put("vis", vis?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject.NULL)
             .put("at", System.currentTimeMillis())
             .toString()
     }
@@ -413,7 +418,10 @@ object WeatherApi {
                 // Dann gilt der höhere Wert aus Radar und Modell, damit das Radar den Regen nicht "beendet".
                 val stationWet = obs?.fresh(nowSec) == true && obs.farWet
                 val modelWet = modelNc.filterKeys { it < radarUntil }.values.any { it * 4 >= 0.1 }
-                drizzle = modelWet && (RadarNowcast.weakEcho(r, nowSec) || stationWet)
+                // nur, wenn das Radar am Ort selbst (3 × 3 km) in der letzten halben Stunde praktisch nichts sah
+                val radarBlindHere = RadarNowcast.slots(r).filter { it.first in (nowSec - 2700)..nowSec }
+                    .all { it.second * 4 < 0.1 }
+                drizzle = modelWet && radarBlindHere && (RadarNowcast.weakEcho(r, nowSec) || stationWet)
                 steady = RadarNowcast.steady(r, nowSec)
                 nowcast.clear()
                 nowcast.addAll(if (drizzle) slots.map { (t, v) -> t to maxOf(v, modelNc[t] ?: 0.0) } else slots)
@@ -461,13 +469,25 @@ object WeatherApi {
         hours.removeAll { it.t < currentHour }
         Observation.adjust(hours, obs, nowSec)
 
+        // Nebel laut DWD-MOSMIX (Sicht < 1 km) im Stundenstreifen zeigen – nur in trockenen Stunden
+        val visPts = root.optJSONObject("vis")?.let { Fog.parse(it) } ?: emptyList()
+        if (visPts.isNotEmpty()) {
+            val mos = visPts.filter { !it.observed }.associateBy { it.t }
+            for (i in hours.indices) {
+                val h = hours[i]
+                if (h.t <= nowSec - 3600 || h.code !in 0..4) continue
+                val v = mos[h.t]?.vis ?: continue
+                if (v < 1000) hours[i] = h.withPrecip(h.precip, h.snow, 45)
+            }
+        }
+
         val uv = HashMap<Long, Double>()
         root.optJSONObject("uv")?.optJSONObject("hourly")?.let { u ->
             val tt = u.optJSONArray("time"); val vv = u.optJSONArray("uv_index")
             if (tt != null) for (i in 0 until tt.length()) { val v = vv.d(i); if (!v.isNaN()) uv[tt.getLong(i)] = v }
         }
         return Forecast(p, offset, hours, days, nowcast, fetchedAt, hasD2, nowcastSnowy, uv, radarUntil, ec.optDouble("elevation", Double.NaN),
-            obs, near, drizzle, steady)
+            obs, near, drizzle, steady, visPts)
     }
 
     private fun dayStart(t: Long, offset: Int): Long {

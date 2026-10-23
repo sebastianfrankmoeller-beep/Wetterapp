@@ -126,6 +126,7 @@ class DriveService : Service(), LocationListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
+        Usage.init(this)
         super.onCreate()
         ensureChannels(this)
         tts = TextToSpeech(this) { st ->

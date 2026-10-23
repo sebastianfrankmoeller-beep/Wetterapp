@@ -70,6 +70,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
     private val desc = Ui.tv(ctx, "", 18f, p.text, true)
     private val feels = Ui.tv(ctx, "", 14f, p.muted)
     private val cloudLine = Ui.tv(ctx, "", 14f, p.muted)
+    private val visLine = Ui.tv(ctx, "", 14f, p.muted)
     private val layersLine = Ui.tv(ctx, "", 12.5f, p.muted).apply { visibility = View.GONE; setLineSpacing(0f, 1.2f) }
     private val sourceLine = Ui.tv(ctx, "", 12f, p.muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
     private val hints = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -155,6 +156,7 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
                     addView(feels, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(6) })
                     addView(cloudLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
                     addView(layersLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(3) })
+                    addView(visLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
                     addView(sourceLine, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(6) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
                 addView(bigIcon)
@@ -344,6 +346,8 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
             }
         ).joinToString("\n")
         if (layersLine.text.isEmpty()) layersLine.visibility = View.GONE
+        visLine.text = now.visLine ?: ""
+        visLine.visibility = if (now.visLine == null) View.GONE else View.VISIBLE
         sourceLine.text = now.source
         sourceLine.setTextColor(if (now.obs != null) p.accent else p.muted)
 
@@ -384,6 +388,8 @@ class ForecastPage(ctx: Context, private val p: Ui.Palette, private val cb: Call
         } else if (next.sumOf { it.snow } >= 0.5) {
             hints.addView(hint(GlyphView.Kind.SNOW, p.snow, "Neuschnee bis ${Fmt.mm(next.sumOf { it.snow })} cm in 24 h"))
         }
+        // Nebel/Dunst-Vorhersage (DWD-MOSMIX)
+        now.fog?.forecast?.let { hints.addView(hint(GlyphView.Kind.FOG, p.cloud, it)) }
         hints.visibility = if (hints.childCount > 0) View.VISIBLE else View.GONE
 
         // Regen der nächsten Stunden (DWD-Radar + Nowcast, danach ICON-D2; nur im D2-/Radargebiet)

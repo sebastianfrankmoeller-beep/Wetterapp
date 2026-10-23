@@ -250,6 +250,7 @@ class RunCard(ctx: Context, private val p: Ui.Palette, private val onTypeChange:
                 GlyphView.Kind.SUN -> p.sun
                 GlyphView.Kind.SNOW -> p.snow
                 GlyphView.Kind.RAIN -> p.rain
+                GlyphView.Kind.FOG -> p.cloud
                 else -> p.muted
             }
             hints.addView(LinearLayout(context).apply {

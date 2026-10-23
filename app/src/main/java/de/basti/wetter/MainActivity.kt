@@ -43,6 +43,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     private fun dpf(v: Number) = Ui.dpf(this, v)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        Usage.init(this)
         super.onCreate(savedInstanceState)
         p = Ui.palette(this)
         Ui.applySystemBars(this, p, if (p.glass) p.bg else p.surface)
@@ -355,12 +356,15 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         val key = cacheKey(Prefs.selected(this), place)
         io.execute {
             var radarRaw: String? = null
+            var visRaw: String? = null
             val tr = Thread { radarRaw = RadarNowcast.fetchRaw(place) }
-            tr.start()
+            val tv = Thread { visRaw = Fog.fetchRaw(place) }
+            tr.start(); tv.start()
             val obsJson = Observation.fetchRaw(place)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
-            tr.join(12000)
+            tr.join(12000); tv.join(10000)
             val radarJson = radarRaw?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
-            if (obsJson == null && radarJson == null) return@execute
+            val visJson = visRaw?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            if (obsJson == null && radarJson == null && visJson == null) return@execute
             main.post {
                 if (shown?.place?.id != place.id) return@post
                 val cached = Prefs.cache(this, key) ?: return@post
@@ -370,6 +374,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                     org.json.JSONObject(cached).apply {
                         if (obsJson != null) put("obs", obsJson)
                         if (radarJson != null) put("radar", radarJson)
+                        if (visJson != null) put("vis", visJson)
                     }.toString()
                 }.getOrNull() ?: return@post
                 val nf = runCatching { WeatherApi.parse(place, merged) }.getOrNull() ?: return@post

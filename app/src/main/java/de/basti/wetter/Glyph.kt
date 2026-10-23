@@ -15,7 +15,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp: Int = 22) : View(ctx) {
 
-    enum class Kind { SHIRT, MOON, SUN, RUN, CAR, SPEAKER, BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, RAIN, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
+    enum class Kind { SHIRT, MOON, SUN, RUN, CAR, SPEAKER, BOLT, SNOW, WARNING, BELL, SEARCH, STAR, STAR_FILLED, GEAR, RAIN, FOG, LOCATE, REFRESH, CLOSE, PLAY, PAUSE, FORECAST, RADAR, WIND, PIN, BACK }
 
     private val d = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -179,6 +179,12 @@ class GlyphView(ctx: Context, var kind: Kind, var color: Int, private val sizeDp
                     paint.style = Paint.Style.FILL_AND_STROKE
                     paint.strokeWidth = 1.2f * u
                     c.drawPath(path, paint)
+                }
+                Kind.FOG -> {
+                    // drei waagerechte Nebelstreifen
+                    c.drawLine(X(3f), Y(7f), X(21f), Y(7f), paint)
+                    c.drawLine(X(5f), Y(12f), X(19f), Y(12f), paint)
+                    c.drawLine(X(3f), Y(17f), X(21f), Y(17f), paint)
                 }
                 Kind.RAIN -> {
                     // Tropfen

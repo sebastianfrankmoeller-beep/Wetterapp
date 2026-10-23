@@ -150,8 +150,61 @@ class DatenCheckTest {
         assertTrue("Regenkarte: $head", head.startsWith("Regen hört"))
         assertTrue("Wiederbeginn genannt: $sub", sub.contains("Pause bis ca.") && sub.contains("dann wieder"))
         val r = RunCheck.evaluate(f, 0, null)!!
-        assertTrue("Regenpause im Lauf-Check: ${r.better}", r.better?.contains("Regenpause") == true)
+        assertTrue("Pause im Lauf-Check: ${r.reason}", r.reason.contains("Pause bis ca.") && r.reason.contains("dann wieder"))
         assertFalse("kein 'nur noch leichter Regen': ${r.better}", r.better?.contains("nur noch") == true)
+    }
+
+    @Test fun laufCheckTrockenNurLautStundenstreifen() {
+        // Lage vom 23.10.: Radar leichter Regen bis zum Ende, ICON 15-Min. danach trocken,
+        // Stundenstreifen aber nass (Regensymbol, 95 %) → kein "trocken" im Lauf-Check
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 8, radarFuture = 8, modelCode = 53, prob = 95))
+        assertFalse("kein Niesel-Modus, Radar sieht den Regen", f.drizzle)
+        val r = RunCheck.evaluate(f, 0, null)!!
+        assertEquals("Leichter Regen die ganzen 2 Stunden", r.reason)
+        val b = r.better ?: ""
+        assertTrue("Danach-Zeile: $b", b.startsWith("Danach weiter"))
+        assertFalse("kein 'trocken ab' bei nassem Stundenstreifen: $b", b.contains("trocken ab"))
+        assertTrue("keine trockene Phase: $b", b.contains("keine trockene Phase"))
+    }
+
+    @Test fun laufCheckKurzerSchauer() {
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, prob = 10,
+            future = { m -> if (m in 31..44) 25 else 0 }))
+        val r = RunCheck.evaluate(f, 0, null)!!
+        assertTrue(r.reason, r.reason.startsWith("Meist trocken, kurzer Schauer um ca."))
+    }
+
+    @Test fun nebelGemessen() {
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, prob = 10,
+            vis = listOf(VisPt(-2, 8000.0, true), VisPt(-1, 1300.0, true), VisPt(0, 150.0, true), VisPt(1, 400.0, false))))
+        val c = f.current()!!
+        assertEquals("Dichter Nebel", c.text)
+        assertEquals(45, c.code)
+        assertTrue(c.visLine ?: "", c.visLine?.startsWith("Sicht 150 m · Dichter Nebel") == true)
+        val r = RunCheck.evaluate(f, 0, null)!!
+        assertEquals("Ampel gelb bei dichtem Nebel", RunCheck.YELLOW, r.level)
+        assertTrue(r.reason, r.reason.startsWith("Nebel – Sicht ca."))
+        assertTrue("Nebel-Hinweis", r.hints.any { it.first == GlyphView.Kind.FOG })
+    }
+
+    @Test fun oertlicherNebelMoeglich() {
+        // Station: Sicht fällt von 26 auf 5 km, 96 % Feuchte, kaum Wind (wie am 23.10. um 07:00)
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, prob = 10,
+            vis = listOf(VisPt(-2, 26000.0, true, 95.0, 5.0), VisPt(0, 4800.0, true, 96.0, 5.0), VisPt(1, 3600.0, false))))
+        val st = Fog.state(f)!!
+        val hr = f.hour(System.currentTimeMillis() / 1000)
+        if (hr >= 18 || hr <= 11) {
+            assertTrue("örtlicher Nebel möglich", st.likely)
+            assertTrue(f.current()!!.text, f.current()!!.text.endsWith("örtlich Nebel möglich"))
+        } else assertFalse("mittags nicht", st.likely)
+        assertTrue(f.current()!!.visLine ?: "", f.current()!!.visLine?.contains("Dunst") == true)
+    }
+
+    @Test fun messungSchlaegtModellnebel() {
+        // Modell meint Nebel (Code 45), gemessen 20 km Sicht → kein Nebel
+        val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, modelCode = 45, prob = 10,
+            vis = listOf(VisPt(0, 20000.0, true))))
+        assertFalse(f.current()!!.text, f.current()!!.text.contains("Nebel"))
     }
 
     @Test fun messwertVerschiebtStundenUndLaufCheck() {
@@ -276,6 +329,16 @@ class DatenCheckTest {
         val slotNow = f.nowcast.firstOrNull { it.first <= nowSec && nowSec < it.first + 900 }
         val wetNow = (slotNow?.second ?: 0.0) * 4 >= 0.1
         if (wetNow && c.code < 45) bad("Kurzfrist nass (${slotNow!!.second * 4} mm/h), Jetzt-Karte '${c.text}'")
+        c.fog?.let { fg ->
+            out.append("- Sicht: ${c.visLine ?: "≥ 10 km"}${fg.forecast?.let { " · $it" } ?: ""}\n")
+            if (fg.visM < 1000 && c.code < 45) bad("gemessene Sicht ${fg.visM} m, Jetzt-Karte '${c.text}'")
+        }
+        if (r != null && r.better?.contains("trocken ab") == true) {
+            // "trocken ab ca. HH:MM" muss zum Stundenstreifen passen
+            val hh = Regex("trocken ab ca\\. (\\d\\d):").find(r.better!!)?.groupValues?.get(1)?.toInt()
+            val h = f.hours.firstOrNull { f.hour(it.t) == hh && it.t > nowSec }
+            if (h != null && (h.precip >= 0.1 || h.code in 51..99)) bad("Lauf-Check 'trocken ab $hh' – Stundenstreifen zeigt dort Regen")
+        }
         if (f.steadyRain && wetNow && c.text.contains("Schauer")) bad("seit 1 Std. Landregen, Jetzt-Karte '${c.text}'")
         if (wetNow && c.code in 51..82) {
             val lvl = RainRate.level(slotNow!!.second * 4)
@@ -309,6 +372,21 @@ class DatenCheckTest {
         }
     }
 
+    @Test fun windkarteLaedt() {
+        // Europa-Übersicht (12 × 10) und ein feiner Ausschnitt um Flensburg
+        val base = runCatching { WindGrid.fetchArea(34.0, 72.0, -25.0, 45.0, 12, 10).first }
+        org.junit.Assume.assumeTrue("Netz", base.isSuccess || base.exceptionOrNull()?.message?.contains("limit", true) != true)
+        val b = base.getOrThrow()
+        assertTrue("48 Stunden", b.times.size >= 40)
+        val out = FloatArray(2)
+        assertTrue("Wert über der Nordsee", b.at(0, 55.0, 5.0, out))
+        val detail = WindGrid.fetch(org.osmdroid.util.BoundingBox(55.5, 10.5, 54.0, 8.5))
+        detail.fallback = b
+        assertTrue("Ausschnitt deckt Flensburg", detail.at(0, 54.8, 9.47, out))
+        assertTrue("außerhalb aus der Übersicht", detail.atAny(0, 48.0, 2.0, out))
+        assertFalse("ohne Übersicht dort nichts", detail.at(0, 48.0, 2.0, out))
+    }
+
     // ================================================================ Testdaten bauen
 
     private class Obs(
@@ -330,8 +408,13 @@ class DatenCheckTest {
         val modelTemp: Double = 10.0,
         val modelLow: Double = 80.0, val modelMid: Double = 20.0, val modelHigh: Double = 0.0,
         val modelTotal: Double = 85.0,
-        val obs: Obs? = null
+        val obs: Obs? = null,
+        val prob: Int = 50,             // Regenwahrscheinlichkeit (ECMWF) aller Stunden
+        val vis: List<VisPt> = emptyList()
     )
+
+    /** Sicht-Datenpunkt: Stunde relativ zu jetzt (0 = laufende Stunde), Sicht m, Messung?, Feuchte, Wind. */
+    private class VisPt(val hour: Int, val vis: Double, val observed: Boolean, val rh: Double = 85.0, val wind: Double = 15.0)
 
     private fun parse(s: Szenario): Forecast = WeatherApi.parse(place, rawFor(s))
 
@@ -362,7 +445,7 @@ class DatenCheckTest {
             .put("wind_speed_10m", arr { 15 }).put("wind_direction_10m", arr { 200 }).put("wind_gusts_10m", arr { 25 })
             .put("is_day", arr { 1 }).put("pressure_msl", arr { 1010 }).put("cape", arr { 0 })
         val ec = JSONObject().put("utc_offset_seconds", 7200).put("elevation", 10)
-            .put("hourly", JSONObject(hourly.toString()).put("precipitation_probability", arr { 50 }).put("lightning_density", arr { 0 }))
+            .put("hourly", JSONObject(hourly.toString()).put("precipitation_probability", arr { s.prob }).put("lightning_density", arr { 0 }))
             .put("daily", JSONObject().put("time", JSONArray()).put("sunrise", JSONArray()).put("sunset", JSONArray()))
         val slot0 = nowSec - nowSec % 900
         val mTimes = (0 until 13).map { slot0 + it * 900L }
@@ -396,6 +479,18 @@ class DatenCheckTest {
 
         val root = JSONObject().put("ec", ec).put("d2", d2).put("uv", JSONObject.NULL).put("radar", radar)
             .put("at", System.currentTimeMillis())
+        if (s.vis.isNotEmpty()) {
+            val recs = JSONArray()
+            for (v in s.vis) {
+                recs.put(JSONObject().put("timestamp", ts(hour0 + v.hour * 3600L) + "+00:00")
+                    .put("source_id", if (v.observed) 1 else 2).put("visibility", v.vis)
+                    .put("relative_humidity", v.rh).put("dew_point", 8.0).put("temperature", 9.0).put("wind_speed", v.wind))
+            }
+            val src = JSONArray()
+                .put(JSONObject().put("id", 1).put("observation_type", "current").put("distance", 3800))
+                .put(JSONObject().put("id", 2).put("observation_type", "forecast").put("distance", 3800))
+            root.put("vis", JSONObject().put("weather", recs).put("sources", src))
+        }
         s.obs?.let { o ->
             val w = JSONObject().put("source_id", 1).put("timestamp", ts(nowSec - 600) + "+00:00")
                 .put("temperature", if (o.temp.isNaN()) JSONObject.NULL else o.temp)
