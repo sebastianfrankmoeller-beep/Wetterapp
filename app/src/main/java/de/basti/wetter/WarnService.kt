@@ -190,6 +190,7 @@ object WarnScheduler {
 
 class WarnJobService : JobService() {
     override fun onStartJob(params: JobParameters?): Boolean {
+        CrashLog.install(this)
         Usage.init(this)
         val app = applicationContext
         Thread {

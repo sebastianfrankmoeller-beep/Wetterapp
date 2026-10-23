@@ -409,6 +409,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
 
         // 2) Partikel weiterbewegen und Schweife zeichnen
         val tc = trailCanvas ?: return
+        if (trails == null || px.isEmpty()) return
         tc.drawColor(Color.argb(222, 0, 0, 0), PorterDuff.Mode.DST_IN)
         for (i in px.indices) {
             val x = px[i]
@@ -423,7 +424,7 @@ class WindOverlay(private val map: MapView, private val p: Ui.Palette, private v
             py[i] = ny
             if (nx < 0 || ny < 0 || nx > w || ny > h) respawn(i, w, h)
         }
-        c.drawBitmap(trails!!, 0f, 0f, null)
+        trails?.let { c.drawBitmap(it, 0f, 0f, null) }
 
         // 3) Info-Fähnchen an der angetippten Stelle
         tapped?.let { drawBubble(c, mv, it) }

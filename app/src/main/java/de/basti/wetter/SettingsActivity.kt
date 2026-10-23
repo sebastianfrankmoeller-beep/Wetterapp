@@ -79,6 +79,8 @@ class SettingsActivity : Activity() {
     private fun dpf(v: Number) = Ui.dpf(this, v)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLog.install(this)
+        CrashLog.note("Einstellungen geöffnet")
         super.onCreate(savedInstanceState)
         p = Ui.palette(this)
         Ui.applySystemBars(this, p)

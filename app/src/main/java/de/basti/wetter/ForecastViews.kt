@@ -118,7 +118,7 @@ class HourlyView(ctx: Context, private val p: Ui.Palette) : View(ctx) {
         val first = max(0, (clip.left / colW).toInt() - 1)
         val last = min(hs.size - 1, (clip.right / colW).toInt() + 1)
 
-        val nowCode = f.current()?.code ?: hs[0].code   // "Jetzt" wie in der Jetzt-Karte
+        val nowCode = runCatching { f.current()?.code }.getOrNull() ?: hs[0].code   // "Jetzt" wie in der Jetzt-Karte
         val minT = hs.minOf { it.temp }
         val maxT = hs.maxOf { it.temp }
         val span = max(4.0, maxT - minT)

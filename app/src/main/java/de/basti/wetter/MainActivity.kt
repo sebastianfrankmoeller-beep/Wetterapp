@@ -43,6 +43,8 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     private fun dpf(v: Number) = Ui.dpf(this, v)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLog.install(this)
+        CrashLog.note("App geöffnet")
         Usage.init(this)
         super.onCreate(savedInstanceState)
         p = Ui.palette(this)
@@ -75,6 +77,31 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         selectTab(0)
         showSelected(refreshLocation = true)
         handleAction(intent)
+        showCrashReport()
+    }
+
+    /** Nach einem Absturz: Bericht einmal anzeigen, zum Kopieren in den Chat. */
+    private fun showCrashReport() {
+        val report = CrashLog.pending(this) ?: return
+        CrashLog.clear(this)
+        main.post {
+            if (isFinishing) return@post
+            val tv = Ui.tv(this, report, 11.5f, p.text).apply {
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+                setPadding(dp(20), dp(8), dp(20), dp(8))
+            }
+            AlertDialog.Builder(this, dialogTheme())
+                .setTitle(if (report.contains("abgefangen")) "Ein Fehler wurde abgefangen" else "Die App wurde zuletzt unerwartet beendet")
+                .setView(android.widget.ScrollView(this).apply { addView(tv) })
+                .setPositiveButton("Bericht kopieren") { _, _ ->
+                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Absturzbericht", report))
+                    android.widget.Toast.makeText(this, "Kopiert – bitte im Chat einfügen", android.widget.Toast.LENGTH_LONG).show()
+                }
+                .setNegativeButton("Schließen", null)
+                .show()
+        }
     }
 
     /** App-Verknüpfungen: Lauf-Check anzeigen bzw. Fahrmodus starten. */
@@ -154,6 +181,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     }
 
     private fun selectTab(i: Int) {
+        CrashLog.note("Seite ${listOf("Vorhersage", "Radar", "Wind").getOrElse(i) { "$i" }}")
         tab = i
         for ((j, t) in navItems.withIndex()) {
             val on = j == i
@@ -345,6 +373,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
      * Das Radar ist alle 5 Minuten neu, die Stationen melden etwa stündlich.
      */
     private fun refreshObs(force: Boolean = false) {
+        CrashLog.note("Messwerte nachladen")
         val f = shown ?: return
         val sel = currentPlace() ?: return
         // Gezeigter Ort muss noch der gewählte sein (Standort darf sich leicht verschoben haben)
@@ -380,15 +409,25 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
                 val nf = runCatching { WeatherApi.parse(place, merged) }.getOrNull() ?: return@post
                 Prefs.setCache(this, key, merged)
                 shown = nf
-                forecastPage.bind(nf)
+                showForecast(nf)
             }
         }
     }
 
-    private fun bind(f: Forecast) {
-        shown = f
+    /** Vorhersage anzeigen – ein Fehler in einzelnen Daten soll die App nicht beenden. */
+    private fun showForecast(f: Forecast): Boolean = try {
         forecastPage.bind(f)
-        forecastPage.showStatus(null)
+        true
+    } catch (e: Exception) {
+        CrashLog.report(e, "Anzeige ${f.place.name}")
+        forecastPage.showStatus("Ein Teil der Anzeige konnte nicht erstellt werden – Fehlerbericht gespeichert")
+        false
+    }
+
+    private fun bind(f: Forecast) {
+        CrashLog.note("Anzeige: ${f.place.name}")
+        shown = f
+        if (showForecast(f)) forecastPage.showStatus(null)
         loadWarnings(f.place)
     }
 
@@ -403,6 +442,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     override fun onSearch() = search.open()
 
     override fun onSelectPlace(id: String) {
+        CrashLog.note("Ort gewählt: ${if (id == Prefs.CURRENT) "Standort" else Prefs.resolve(this, id)?.name ?: id}")
         val same = id == Prefs.selected(this)
         Prefs.setSelected(this, id)
         if (!same) {
@@ -456,6 +496,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     private val refreshTimeout = Runnable { finishRefresh("Aktualisieren dauert zu lange – später erneut versuchen") }
 
     override fun onRefresh() {
+        CrashLog.note("Aktualisieren (ziehen)")
         val now = System.currentTimeMillis()
         forecastPage.setRefreshing(true)
         // Höchstens alle 30 Sekunden wirklich neu laden (schont das Open-Meteo-Kontingent)
@@ -541,6 +582,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     // -------------------------------------------------------- SearchPanel.Callbacks
 
     override fun onPick(place: Place) {
+        CrashLog.note("Ort gesucht: ${place.name}")
         search.close()
         val fav = Prefs.favorites(this).firstOrNull { it.id == place.id }
         if (fav == null) Prefs.setTempPlace(this, place)
@@ -580,6 +622,7 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onResume() {
         super.onResume()
+        CrashLog.note("App im Vordergrund")
         if (Prefs.theme(this) * 100000 + Prefs.styleVersion(this) != themeAtStart) { recreate(); return }
         // Noch nichts angezeigt (z. B. Standort erst in den Einstellungen erlaubt/eingeschaltet) → erneut versuchen
         if (shown == null && Prefs.selected(this) == Prefs.CURRENT && Locator.hasPermission(this) && !firstResume) locateAndLoad()

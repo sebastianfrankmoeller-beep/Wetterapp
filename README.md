@@ -62,6 +62,9 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Eigenes Aussehen** (Einstellungen → Darstellung → Anpassen): Akzentfarbe und Hintergrundton
   frei wählbar per Farbwähler (Farbfeld + Farbton, stufenlos, Live-Vorschau beim Ziehen, Hinweis bei schlechter Lesbarkeit), Hintergrund (neutral, Verlauf oder eigenes Bild – auch HEIC, richtig gedreht,
   weichgezeichnet und automatisch abgedunkelt), Schrift (Modern/Kompakt/Rund, Größe), Ecken
+- **Absturzbericht**: Nach einem Absturz zeigt die App beim nächsten Start einmal den Bericht
+  (Fehlerstelle, Version, letzte Aktionen) mit „Bericht kopieren“. Fehler in Hintergrund-Abläufen und beim
+  Anzeigen der Daten werden abgefangen, die App läuft weiter und speichert einen Bericht
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 
 ## Lauf-Check

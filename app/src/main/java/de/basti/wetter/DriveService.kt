@@ -126,6 +126,8 @@ class DriveService : Service(), LocationListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
+        CrashLog.install(this)
+        CrashLog.note("Fahrmodus gestartet")
         Usage.init(this)
         super.onCreate()
         ensureChannels(this)

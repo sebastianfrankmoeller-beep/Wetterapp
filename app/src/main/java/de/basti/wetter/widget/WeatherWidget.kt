@@ -21,11 +21,12 @@ import org.json.JSONObject
 class WeatherWidget : AppWidgetProvider() {
 
     override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) {
+        de.basti.wetter.CrashLog.install(ctx)
         de.basti.wetter.Usage.init(ctx)
         val pending = goAsync()
         Thread {
             try {
-                for (id in ids) update(ctx, mgr, id, allowFetch = true)
+                for (id in ids) runCatching { update(ctx, mgr, id, allowFetch = true) }
             } finally {
                 pending.finish()
             }
@@ -36,7 +37,7 @@ class WeatherWidget : AppWidgetProvider() {
         // Größe geändert → neu zeichnen (ohne Netz)
         val pending = goAsync()
         Thread {
-            try { update(ctx, mgr, id, allowFetch = false) } finally { pending.finish() }
+            try { runCatching { update(ctx, mgr, id, allowFetch = false) } } finally { pending.finish() }
         }.start()
     }
 
