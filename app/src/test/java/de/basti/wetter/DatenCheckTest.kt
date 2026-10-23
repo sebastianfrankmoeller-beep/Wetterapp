@@ -149,7 +149,9 @@ class DatenCheckTest {
         assertTrue("Regenkarte: $head", head.startsWith("Regen hört"))
         assertTrue("Wiederbeginn genannt: $sub", sub.contains("Pause bis ca.") && sub.contains("dann wieder"))
         val r = RunCheck.evaluate(f, 0, null)!!
-        assertTrue("Pause im Lauf-Check: ${r.reason}", r.reason.contains("Pause bis ca.") && r.reason.contains("dann wieder"))
+        // je nach Startzeit fällt die 45-Min.-Pause auf 2 oder 3 Viertelstunden
+        assertTrue("Pause im Lauf-Check: ${r.reason}", r.reason.contains("kurze Pause ca.") ||
+            (r.reason.contains("Pause bis ca.") && r.reason.contains("dann wieder")))
         assertFalse("kein 'nur noch leichter Regen': ${r.better}", r.better?.contains("nur noch") == true)
     }
 
