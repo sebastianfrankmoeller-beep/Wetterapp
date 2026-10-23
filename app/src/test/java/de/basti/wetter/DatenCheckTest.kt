@@ -318,7 +318,7 @@ class DatenCheckTest {
         summary?.let { out.append("- Regenkarte: ${it.first}${if (it.second.isNotEmpty()) " · ${it.second}" else ""}\n") }
         if (r != null) {
             out.append("- Lauf-Check: ${r.headline} – ${r.reason}\n")
-            out.append("  - Verlauf: ${r.slots.joinToString(" ") { "${listOf("G", "Y", "R")[it.level]}:${Fmt.temp(it.feels)}/${"%.1f".format(Locale.US, it.rain)}" }}\n")
+            out.append("  - Verlauf: ${r.slots.joinToString(" ") { "${listOf("T", "G", "Y", "O", "R")[it.level]}:${Fmt.temp(it.feels)}/${"%.1f".format(Locale.US, it.rain)}" }}\n")
             r.hints.forEach { out.append("  - Hinweis: ${it.second}\n") }
             r.better?.let { out.append("  - Danach: ${it.replace("\n", " / ")}\n") }
         }
