@@ -121,6 +121,10 @@ object RunCheck {
         val relevant = warnings.orEmpty().filter { w -> w.onset < end && (w.expires == 0L || w.expires > start) && w.level >= 2 }
         val warnRed = relevant.firstOrNull { it.level >= 3 || it.isThunder }
 
+        // Regnet es direkt nach den 2 Stunden wieder (Regenkarte bzw. Stundenstreifen)? Dann nicht "danach trocken"
+        val wetAfter = buildSlots(f, start + slotsN * 900L, 4).any { it.rain >= 0.1 } ||
+            f.hours.firstOrNull { it.t + 3600 > start + slotsN * 900L }?.let { hourClass(it) == 2 } == true
+
         var level = slots.maxOf { it.level }
         if (warnRed != null) level = RED
         else if (relevant.isNotEmpty()) level = max(level, YELLOW)
@@ -136,8 +140,8 @@ object RunCheck {
         var reason: String = when {
             warnRed != null -> "Amtliche Warnung: " + titleCase(warnRed.event)
             first == null && relevant.isNotEmpty() -> "Warnung: " + titleCase(relevant.first().event)
-            first == null -> rainText(f, slots, level) ?: "Trocken und angenehm"
-            first.reason == WET -> rainText(f, slots, level) ?: "Nass"
+            first == null -> rainText(f, slots, level, wetAfter) ?: "Trocken und angenehm"
+            first.reason == WET -> rainText(f, slots, level, wetAfter) ?: "Nass"
             first === slots.first() -> {
                 val endIdx = slots.indexOfFirst { it.level < level }
                 if (endIdx < 0) "${cap(why(first))} die ganzen 2 Stunden"
@@ -316,7 +320,7 @@ object RunCheck {
      * "Meist trocken, kurzer Schauer um ca. 12:30", "Leichter Regen, kurze Pause ca. 12:30–12:45",
      * "Wechselhaft – immer wieder leichter Regen, zwischendurch trocken", "Trocken bis ca. 13:00, dann leichter Regen".
      */
-    private fun rainText(f: Forecast, slots: List<Slot>, level: Int): String? {
+    private fun rainText(f: Forecast, slots: List<Slot>, level: Int, wetAfter: Boolean = false): String? {
         val wet = slots.map { it.rain >= 0.1 }
         if (wet.none { it }) {
             return if (slots.any { it.rain >= 0.02 })
@@ -343,7 +347,7 @@ object RunCheck {
                 val r = runs[0]
                 when {
                     r.first == 0 && r.last == n - 1 -> "$head die ganzen 2 Stunden$spitze"
-                    r.first == 0 -> "$head bis ca. ${tEnd(r.last)}, danach trocken$spitze"
+                    r.first == 0 -> "$head bis ca. ${tEnd(r.last)}, ${if (wetAfter) "danach nur kurz trocken" else "danach trocken"}$spitze"
                     r.last == n - 1 -> "Trocken bis ca. ${t(r.first)}, dann ${low(head)}$spitze"
                     r.last - r.first + 1 <= 2 -> "Meist trocken, kurzer $shower um ca. ${t(r.first)}$spitze"
                     else -> "$head ca. ${t(r.first)}–${tEnd(r.last)}, sonst trocken$spitze"

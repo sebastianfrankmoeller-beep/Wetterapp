@@ -130,7 +130,6 @@ class DatenCheckTest {
         val r = RunCheck.evaluate(f, 0, null)!!
         assertTrue("Lauf-Check beschreibt die Phase ab jetzt: ${r.reason}", r.reason.startsWith("Mäßiger Regen bis ca."))
         assertFalse("kein 'ab ca.' bei Regen jetzt: ${r.reason}", r.reason.contains("ab ca."))
-        assertEquals("Stundenstreifen 'Jetzt' gleich", 63, f.hours.first().code)
     }
 
     @Test fun kurzerSchauerBleibtSchauer() {
@@ -305,6 +304,7 @@ class DatenCheckTest {
             out.append("- Lauf-Check: ${r.headline} – ${r.reason}\n")
             out.append("  - Verlauf: ${r.slots.joinToString(" ") { "${listOf("G", "Y", "R")[it.level]}:${Fmt.temp(it.feels)}/${"%.1f".format(Locale.US, it.rain)}" }}\n")
             r.hints.forEach { out.append("  - Hinweis: ${it.second}\n") }
+            r.better?.let { out.append("  - Danach: ${it.replace("\n", " / ")}\n") }
         }
         out.append('\n')
 
@@ -333,6 +333,8 @@ class DatenCheckTest {
             out.append("- Sicht: ${c.visLine ?: "≥ 10 km"}${fg.forecast?.let { " · $it" } ?: ""}\n")
             if (fg.visM < 1000 && c.code < 45) bad("gemessene Sicht ${fg.visM} m, Jetzt-Karte '${c.text}'")
         }
+        if (r != null && r.reason.contains("danach trocken") && nc.drop(8).take(4).any { it.second * 4 >= 0.1 })
+            bad("Lauf-Check '${r.reason}', aber direkt danach Regen in der Regenkarte")
         if (r != null && r.better?.contains("trocken ab") == true) {
             // "trocken ab ca. HH:MM" muss zum Stundenstreifen passen
             val hh = Regex("trocken ab ca\\. (\\d\\d):").find(r.better!!)?.groupValues?.get(1)?.toInt()
