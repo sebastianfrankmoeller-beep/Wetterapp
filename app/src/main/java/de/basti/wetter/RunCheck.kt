@@ -19,9 +19,12 @@ object RunCheck {
     /** Interner Grund "nass" – der Text ("Mäßiger Regen bis ca. 22:15") entsteht aus der ganzen Regenphase. */
     private const val WET = "nass"
 
-    const val GREEN = 0
-    const val YELLOW = 1
-    const val RED = 2
+    /** Laufwetter-Skala in 5 Stufen (feste Farben, unabhängig vom Akzent). */
+    const val TOP = 0      // Dunkelgrün – Top-Laufwetter
+    const val GOOD = 1     // Hellgrün – gut, kleine Abstriche
+    const val FAIR = 2     // Gelb – geht so
+    const val POOR = 3     // Orange – ungemütlich
+    const val BAD = 4      // Rot – lieber verschieben
 
     class Slot(
         val t: Long,
@@ -67,27 +70,40 @@ object RunCheck {
     private fun hourAt(hs: List<Hour>, t: Long): Hour? = hs.lastOrNull { it.t <= t } ?: hs.firstOrNull()
 
     /** Bewertung eines einzelnen Zeitpunkts. */
-    private fun rate(rain: Double, snowy: Boolean, temp: Double, feels: Double, gust: Double, thunder: Int, code: Int): Pair<Int, String?> {
-        if (thunder >= 2 || code >= 95) return RED to "Gewitter"
-        if (code in 56..57 || code in 66..67) return RED to "Glatteis"
-        if (!gust.isNaN() && gust >= 65) return RED to "Sturmböen"
-        if (!feels.isNaN() && feels >= 32) return RED to "Hitze"
-        // Ab 4 mm/h wird man in Minuten nass → Rot (Läufer-Schwelle); die Stärke im Text richtet sich nach DWD
-        if (rain >= 4.0) return RED to WET
-        if (!temp.isNaN() && temp <= 1.0 && rain >= 0.1) return YELLOW to "Glätte möglich"
-        if (rain >= 0.3) return YELLOW to WET
-        if (thunder == 1) return YELLOW to "Gewitterrisiko"
-        if (!gust.isNaN() && gust >= 45) return YELLOW to "böiger Wind"
-        if (!feels.isNaN() && feels >= 26) return YELLOW to "warm"
-        if (!feels.isNaN() && feels <= -8) return YELLOW to "sehr kalt"
-        return GREEN to null
+    private fun rate(rain: Double, snowy: Boolean, temp: Double, feels: Double, gust: Double, thunder: Int, code: Int, type: Int): Pair<Int, String?> {
+        if (thunder >= 2 || code >= 95) return BAD to "Gewitter"
+        if (code in 56..57 || code in 66..67) return BAD to "Glatteis"
+        if (!gust.isNaN() && gust >= 65) return BAD to "Sturmböen"
+        if (!feels.isNaN() && feels >= 32) return BAD to "Hitze"
+        // Ab 4 mm/h wird man in Minuten nass; kalt und nass (gefühlt unter 5 °C) kühlt aus → Rot
+        if (rain >= 4.0) return BAD to WET
+        if (rain >= 0.1 && !feels.isNaN() && feels < 5) return BAD to WET
+        if (!temp.isNaN() && temp <= 1.0 && rain >= 0.1) return POOR to "Glätte möglich"
+        // Bei kühlem Wetter (gefühlt unter 15 °C) ist schon der erste Tropfen ungemütlich
+        val cool = feels.isNaN() || feels < 15
+        // (ab 0,05 mm/h – darunter können auch schwache Störechos des Radars liegen)
+        if (rain >= 0.05 && cool) return POOR to WET
+        if (rain >= 0.1) return FAIR to WET                       // warm: leichter Regen geht so
+        if (thunder == 1) return FAIR to "Gewitterrisiko"
+        if (!gust.isNaN() && gust >= 45) return FAIR to "böiger Wind"
+        if (!feels.isNaN() && feels >= 26) return FAIR to "warm"
+        if (!feels.isNaN() && feels <= -8) return FAIR to "sehr kalt"
+        if (rain >= 0.02) return GOOD to WET                      // warm, vereinzelte Tropfen
+        // Wohlfühlbereich je Läufertyp (verschoben wie bei der Kleidung)
+        if (!feels.isNaN()) {
+            val e = feels - TYPE_SHIFT[type.coerceIn(0, 2)]
+            if (e < 3) return GOOD to "frisch"
+            if (e > 17) return GOOD to "recht warm"
+        }
+        if (!gust.isNaN() && gust >= 30) return GOOD to "etwas Wind"
+        return TOP to null
     }
 
     /**
      * 15-Minuten-Abschnitte ab [start]: Regen aus dem Kurzfrist-Nowcast (Radar/ICON-D2), wo vorhanden,
      * sonst Stundenwert. Wird für den Verlauf UND die Suche nach einem besseren Zeitfenster benutzt.
      */
-    private fun buildSlots(f: Forecast, start: Long, n: Int): List<Slot> {
+    private fun buildSlots(f: Forecast, start: Long, n: Int, type: Int = 0): List<Slot> {
         val hs = f.hours
         val nc = f.nowcast.associate { it.first to it.second }
         return (0 until n).map { k ->
@@ -99,9 +115,7 @@ object RunCheck {
             val temp = interp(hs, t) { it.temp }
             val feels = interp(hs, t) { it.feels }
             val gust = interp(hs, t) { it.gust }
-            var (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0)
-            // Niesel: unangenehm nass, auch wenn die Menge klein ist
-            if (lvl == GREEN && f.drizzle && !snowy && rain >= 0.1) { lvl = YELLOW; why = WET }
+            val (lvl, why) = rate(rain, snowy, temp, feels, gust, h?.thunder ?: 0, h?.code ?: 0, type)
             val near = ncKey != null && rain < 0.1 && (f.nowcastNear[ncKey] ?: 0.0) * 4 >= 0.3
             Slot(t, rain, snowy, temp, feels, interp(hs, t) { it.wind }, gust, h?.windDir ?: Double.NaN,
                 h?.thunder ?: 0, h?.isDay ?: true, lvl, why, near)
@@ -114,7 +128,7 @@ object RunCheck {
         val now = System.currentTimeMillis() / 1000
         val start = now - now % 900
         val slotsN = 8
-        val slots = buildSlots(f, start, slotsN)
+        val slots = buildSlots(f, start, slotsN, type)
 
         // Amtliche Warnungen, die in die 2 Stunden fallen
         val end = start + slotsN * 900L
@@ -122,12 +136,12 @@ object RunCheck {
         val warnRed = relevant.firstOrNull { it.level >= 3 || it.isThunder }
 
         // Regnet es direkt nach den 2 Stunden wieder (Regenkarte bzw. Stundenstreifen)? Dann nicht "danach trocken"
-        val wetAfter = buildSlots(f, start + slotsN * 900L, 4).any { it.rain >= 0.1 } ||
+        val wetAfter = buildSlots(f, start + slotsN * 900L, 4, type).any { it.rain >= 0.1 } ||
             f.hours.firstOrNull { it.t + 3600 > start + slotsN * 900L }?.let { hourClass(it) == 2 } == true
 
         var level = slots.maxOf { it.level }
-        if (warnRed != null) level = RED
-        else if (relevant.isNotEmpty()) level = max(level, YELLOW)
+        if (warnRed != null) level = BAD
+        else if (relevant.isNotEmpty()) level = max(level, FAIR)
 
         // Hauptgrund und Überschrift
         val worst = slots.filter { it.level == level && it.reason != null }
@@ -142,6 +156,9 @@ object RunCheck {
             first == null && relevant.isNotEmpty() -> "Warnung: " + titleCase(relevant.first().event)
             first == null -> rainText(f, slots, level, wetAfter) ?: "Trocken und angenehm"
             first.reason == WET -> rainText(f, slots, level, wetAfter) ?: "Nass"
+            // Kleine Abstriche (Hellgrün): "Trocken, frisch und etwas Wind"
+            level == GOOD -> "Trocken, " + slots.mapNotNull { it.reason }.filter { it in setOf("frisch", "recht warm", "etwas Wind") }
+                .distinct().joinToString(" und ")
             first === slots.first() -> {
                 val endIdx = slots.indexOfFirst { it.level < level }
                 if (endIdx < 0) "${cap(why(first))} die ganzen 2 Stunden"
@@ -155,14 +172,19 @@ object RunCheck {
         val fogVis = listOfNotNull(fog?.visM, fogAhead).minOrNull()
         val dark = !slots.all { it.isDay }
         val fogNear = (fogVis != null && fogVis < 1000) || fog?.likely == true
-        if (fogVis != null && (fogVis < 200 || (fogVis < 1000 && dark)) && level == GREEN) {
-            level = YELLOW
+        if (fogVis != null && fogVis < 200 && dark && level < BAD) {
+            level = BAD
+            reason = "Dichter Nebel im Dunkeln – Sicht ca. ${Fog.dist(fogVis)}"
+        } else if (fogVis != null && (fogVis < 200 || (fogVis < 1000 && dark)) && level < FAIR) {
+            level = FAIR
             reason = "Nebel – Sicht ca. ${Fog.dist(fogVis)}"
         }
 
         val headline = when (level) {
-            GREEN -> "Gute Bedingungen"
-            YELLOW -> "Läuft, aber …"
+            TOP -> "Top-Laufwetter"
+            GOOD -> "Gute Bedingungen"
+            FAIR -> "Geht so"
+            POOR -> "Ungemütlich"
             else -> "Lieber verschieben"
         }
 
@@ -171,7 +193,7 @@ object RunCheck {
         val warm = feelsList.maxOrNull() ?: Double.NaN
         val cold = feelsList.minOrNull() ?: Double.NaN
         val maxGust = slots.map { it.gust }.filter { !it.isNaN() }.maxOrNull() ?: 0.0
-        val anyRain = slots.any { it.rain >= 0.3 }
+        val anyRain = slots.any { it.rain >= 0.1 }
         val clothing = clothing(warm, type, anyRain, maxGust)
         val clothingNote = if (!warm.isNaN() && !cold.isNaN() && warm - cold >= 3)
             (if (slots.first().feels < warm) "Zu Beginn kühler – lieber kurz frösteln" else "Wird kühler – ggf. Schicht zum Überziehen")
@@ -206,7 +228,7 @@ object RunCheck {
         if (fogNear) hints.add(GlyphView.Kind.FOG to
             if (fogVis != null && fogVis < 1000) "Nebel – Sicht ca. ${Fog.dist(fogVis)}, Licht/Reflektoren"
             else "Örtlich Nebel möglich – Licht/Reflektoren")
-        if (slots.any { it.thunder >= 1 } && level < RED) hints.add(GlyphView.Kind.BOLT to "Gewitterrisiko – Himmel im Blick behalten")
+        if (slots.any { it.thunder >= 1 } && level < BAD) hints.add(GlyphView.Kind.BOLT to "Gewitterrisiko – Himmel im Blick behalten")
         if (slots.any { !it.temp.isNaN() && it.temp <= 1.0 } && (slots.any { it.rain >= 0.05 } || hs.take(6).any { it.precip >= 0.1 }))
             hints.add(GlyphView.Kind.SNOW to "Um 0 °C und nass – rutschige Wege möglich")
         // Dunkelheit
@@ -227,7 +249,7 @@ object RunCheck {
         // das laut Stundenstreifen nicht nass ist
         val rainy = slots.any { it.rain >= 0.1 } || first?.reason == WET
         val better = if (rainy) afterLine(f, end, now)
-            else if (level == GREEN) null else betterWindow(f, start, level)
+            else if (level <= GOOD) null else betterWindow(f, start, level, type)
 
         return Result(level, headline, reason, clothing, clothingNote, slots, hints, better)
     }
@@ -252,7 +274,8 @@ object RunCheck {
      */
     private fun improvements(now: Stats, later: Stats): List<String>? {
         // Nichts darf deutlich schlechter werden
-        if (later.level > now.level) return null
+        // mindestens eine Stufe besser
+        if (later.level >= now.level) return null
         if (later.thunder > now.thunder || (later.ice && !now.ice)) return null
         if (later.rainSlots > now.rainSlots + 1 || later.gustMax > now.gustMax + 8) return null
         val out = ArrayList<String>()
@@ -263,7 +286,7 @@ object RunCheck {
                 later.rainSlots == 0 && later.rainMax < 0.1 -> out.add("trocken")
             }
             // Bei Regen zählt nur "trocken"; sonst lieber die Regenpause nennen
-            if (out.isEmpty() && now.level >= YELLOW && later.rainSlots > 0) return null
+            if (out.isEmpty() && now.level >= FAIR && later.rainSlots > 0) return null
         }
         if (now.gustMax >= 45 && later.gustMax <= now.gustMax - 10) out.add("Böen nur noch bis ${later.gustMax.roundToInt()} km/h")
         if (!now.feelsMax.isNaN() && now.feelsMax >= 26 && later.feelsMax <= now.feelsMax - 4) out.add("kühler (${Fmt.temp(later.feelsMax)} gefühlt)")
@@ -276,15 +299,15 @@ object RunCheck {
      * (Regen, Böen, Gewitter, Glätte, Hitze, Kälte), mit denselben 15-Minuten-Daten wie der Verlauf.
      * Bevorzugt wird das früheste Fenster mit guten Bedingungen, sonst das früheste spürbar bessere.
      */
-    private fun betterWindow(f: Forecast, start: Long, current: Int): String? {
+    private fun betterWindow(f: Forecast, start: Long, current: Int, type: Int = 0): String? {
         val lastHour = f.hours.lastOrNull()?.t ?: return null
-        val nowStats = Stats(buildSlots(f, start, 8))
+        val nowStats = Stats(buildSlots(f, start, 8, type))
         var firstBetter: Pair<Long, List<String>>? = null
         var firstGreen: Pair<Long, List<String>>? = null
         var s = start + 1800
         s += (1800 - s % 1800) % 1800
         while (s < start + 12 * 3600 && s + 7200 <= lastHour + 3600) {
-            val st = Stats(buildSlots(f, s, 8))
+            val st = Stats(buildSlots(f, s, 8, type))
             // nachts nur vorschlagen, wenn es jetzt auch dunkel ist
             if (st.dayAll || !nowStats.dayAll) {
                 val imp = improvements(nowStats, st)?.let { l ->
@@ -292,7 +315,7 @@ object RunCheck {
                 }
                 if (imp != null) {
                     if (firstBetter == null) firstBetter = s to imp
-                    if (st.level == GREEN) { firstGreen = s to imp; break }
+                    if (st.level <= GOOD) { firstGreen = s to imp; break }
                 }
             }
             s += 1800
@@ -337,7 +360,8 @@ object RunCheck {
         val peak = wetSlots.maxOf { it.rain }
         val noun = what(wetSlots.any { it.snowy }, f.drizzle)
         val head = "${adj(peak, noun)} $noun"
-        val spitze = if (level == RED) ", in der Spitze ${peak.roundToInt()} mm/h" else ""
+        val spitze = if (level == BAD && peak >= 4) ", in der Spitze ${peak.roundToInt()} mm/h"
+            else if (level == BAD) " – kalt und nass" else ""
         val n = slots.size
         fun t(i: Int) = f.hhmm(slots[i].t)
         fun tEnd(i: Int) = if (i + 1 < n) f.hhmm(slots[i + 1].t) else f.hhmm(slots[i].t + 900)
@@ -441,10 +465,12 @@ object RunCheck {
     private fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
     fun titleCase(s: String) = s.split(" ").joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.uppercase() } }
 
-    /** Ampelfarben – bewusst fest, unabhängig von der gewählten Akzentfarbe. */
+    /** Farben der Skala – bewusst fest, unabhängig von der gewählten Akzentfarbe. */
     fun color(level: Int, p: Ui.Palette): Int = when (level) {
-        GREEN -> if (p.dark) 0xFF34D07B.toInt() else 0xFF16A34A.toInt()
-        YELLOW -> if (p.dark) 0xFFF5B544.toInt() else 0xFFC77700.toInt()
-        else -> if (p.dark) 0xFFFF5A4F.toInt() else 0xFFE5392F.toInt()
+        TOP -> if (p.dark) 0xFF1FB863.toInt() else 0xFF15803D.toInt()    // dunkelgrün
+        GOOD -> if (p.dark) 0xFF9BDD5A.toInt() else 0xFF5E9C0C.toInt()   // hellgrün
+        FAIR -> if (p.dark) 0xFFF2CC3A.toInt() else 0xFFB08600.toInt()   // gelb
+        POOR -> if (p.dark) 0xFFFF8A3D.toInt() else 0xFFDD5F0E.toInt()   // orange
+        else -> if (p.dark) 0xFFFF5A4F.toInt() else 0xFFE5392F.toInt()   // rot
     }
 }

@@ -147,7 +147,7 @@ object WidgetRenderer {
         text.textAlign = Paint.Align.LEFT
         text.typeface = medium
         text.textSize = 16 * d
-        text.color = if (r.level == RunCheck.GREEN) p.text else col
+        text.color = if (r.level <= RunCheck.GOOD) p.text else col
         c.drawText(r.headline, x + 22 * d, y + 17 * d, text)
         val headW = text.measureText(r.headline)
         text.typeface = Ui.TF_REGULAR

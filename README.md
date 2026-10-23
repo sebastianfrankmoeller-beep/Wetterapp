@@ -66,6 +66,11 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 
 ## Lauf-Check
 
+**Laufwetter-Skala in 5 Stufen** (feste Farben): Dunkelgrün *Top-Laufwetter* · Hellgrün *Gute Bedingungen*
+(trocken, frisch/etwas Wind) · Gelb *Geht so* (leichter Regen bei warmem Wetter, Böen ab 45, warm ab 26 °C) ·
+Orange *Ungemütlich* (bei gefühlt unter 15 °C schon ab den ersten Tropfen) · Rot *Lieber verschieben*
+(ab 4 mm/h, kalt und nass unter 5 °C gefühlt, Gewitter, Glatteis, Sturmböen, Hitze, dichter Nebel im Dunkeln).
+
 Der Lauf-Check nutzt nur Daten, die die App ohnehin zeigt: die nächsten 2 Stunden aus Regenkarte und Jetzt-Werten,
 alles danach aus dem Stundenstreifen (Symbol, Menge, Regenwahrscheinlichkeit). Texte abgestuft, z. B.
 „Meist trocken, kurzer Schauer um ca. 12:30“, „Leichter Regen, kurze Pause ca. 12:30–12:45“,
@@ -73,8 +78,8 @@ alles danach aus dem Stundenstreifen (Symbol, Menge, Regenwahrscheinlichkeit). T
 
 Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer für die **nächsten 2 Stunden**:
 
-- **Ampel** mit Urteil und Hauptgrund (z. B. „Leichter Regen ab ca. 12:30“)
-- **Verlauf in 15-Minuten-Schritten**: Ampelfarbe, Regen-Tropfen, gefühlte Temperatur, Wind und Böen – antippen für Details
+- **Skala** mit Urteil und Hauptgrund (z. B. „Leichter Regen ab ca. 12:30“)
+- **Verlauf in 15-Minuten-Schritten**: Stufenfarbe, Regen-Tropfen, gefühlte Temperatur, Wind und Böen – antippen für Details
 - **Kleidung** nach gefühlter Temperatur und **Läufertyp** (Läuft warm / Normal / Friert schnell –
   in den Einstellungen oder per Pille in der Karte)
 - **Hinweise**: Gegenwind-Tipp, Gewitter, Glätte, Dunkelheit, Hitze, UV, Warnungen

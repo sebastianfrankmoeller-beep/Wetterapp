@@ -63,7 +63,7 @@ class DatenCheckTest {
         val c = f.current()!!
         assertTrue("Jetzt-Karte zeigt Niederschlag (Code ${c.code}, ${c.text})", c.code in 51..67)
         val r = RunCheck.evaluate(f, 0, null)!!
-        assertEquals("Lauf-Check gelb bei Niesel", RunCheck.YELLOW, r.level)
+        assertEquals("Niesel bei 7 °C gefühlt: ungemütlich", RunCheck.POOR, r.level)
         assertTrue("Niesel-Hinweis", r.hints.any { it.second.startsWith("Niesel") })
         val (head, _) = nowcastSummary(f, f.nowcast.take(13))
         assertTrue("Regenkarte nennt Niesel: $head", head.startsWith("Niesel"))
@@ -83,7 +83,7 @@ class DatenCheckTest {
         val f = parse(Szenario(modelMm15 = 0.0, radarPast = 1, radarPastShare = 0.3, radarFuture = 0))
         assertFalse("keine Niesel-Lage ohne Modellregen", f.drizzle)
         val r = RunCheck.evaluate(f, 0, null)!!
-        assertEquals("Lauf-Check bleibt grün", RunCheck.GREEN, r.level)
+        assertTrue("Lauf-Check bleibt grün bei Störecho", r.level <= RunCheck.GOOD)
         val (head, _) = nowcastSummary(f, f.nowcast.take(13))
         assertFalse("kein 'Niesel'/'Regen hört' bei Störecho: $head", head.startsWith("Niesel") || head.startsWith("Regen"))
     }
@@ -168,6 +168,20 @@ class DatenCheckTest {
         assertTrue("keine trockene Phase: $b", b.contains("keine trockene Phase"))
     }
 
+    @Test fun skalaRegenNachTemperatur() {
+        // leichter Regen: kühl (7 °C gefühlt) → Orange, kalt (2 °C) → Rot "kalt und nass", warm (20 °C) → Gelb
+        fun lvl(temp: Double): RunCheck.Result {
+            val f = parse(Szenario(modelMm15 = 0.0, radarPast = 8, radarFuture = 8, modelTemp = temp, prob = 90))
+            return RunCheck.evaluate(f, 0, null)!!
+        }
+        assertEquals(RunCheck.POOR, lvl(10.0).level)
+        val cold = lvl(5.0)
+        assertEquals(RunCheck.BAD, cold.level)
+        assertTrue(cold.reason, cold.reason.endsWith("kalt und nass"))
+        assertEquals(RunCheck.FAIR, lvl(23.0).level)
+        assertTrue("Regenjacke bei Kälte", lvl(10.0).clothing.contains("Regenjacke"))
+    }
+
     @Test fun laufCheckKurzerSchauer() {
         val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, prob = 10,
             future = { m -> if (m in 31..44) 25 else 0 }))
@@ -183,7 +197,7 @@ class DatenCheckTest {
         assertEquals(45, c.code)
         assertTrue(c.visLine ?: "", c.visLine?.startsWith("Sicht 150 m · Dichter Nebel") == true)
         val r = RunCheck.evaluate(f, 0, null)!!
-        assertEquals("Ampel gelb bei dichtem Nebel", RunCheck.YELLOW, r.level)
+        assertEquals("Gelb bei dichtem Nebel im Hellen", RunCheck.FAIR, r.level)
         assertTrue(r.reason, r.reason.startsWith("Nebel – Sicht ca."))
         assertTrue("Nebel-Hinweis", r.hints.any { it.first == GlyphView.Kind.FOG })
     }
@@ -226,7 +240,7 @@ class DatenCheckTest {
         val f = parse(Szenario(modelMm15 = 0.0, radarPast = 0, radarFuture = 0, modelLow = 0.0, modelMid = 0.0, modelHigh = 0.0, modelTotal = 0.0))
         val (head, _) = nowcastSummary(f, f.nowcast.take(13))
         assertTrue(head, head.startsWith("Kein Regen"))
-        assertEquals(RunCheck.GREEN, RunCheck.evaluate(f, 0, null)!!.level)
+        assertEquals(RunCheck.TOP, RunCheck.evaluate(f, 0, null)!!.level)
         assertEquals(0, f.current()!!.code)
     }
 
@@ -361,7 +375,9 @@ class DatenCheckTest {
         if (r != null) {
             val runWet = r.slots.any { it.rain >= 0.3 }
             if (runWet && summary != null && summary.first.startsWith("Kein")) bad("Lauf-Check nass, Regenkarte '${summary.first}'")
-            if (r.level == RunCheck.GREEN && r.slots.any { it.rain >= 0.3 }) bad("Lauf-Check grün trotz Regen ≥ 0,3 mm/h")
+            if (r.level <= RunCheck.GOOD && r.slots.any { it.rain >= 0.1 }) bad("Lauf-Check grün trotz Regen ≥ 0,1 mm/h")
+            val coolWet = r.slots.any { it.rain >= 0.1 && !it.feels.isNaN() && it.feels < 15 }
+            if (coolWet && r.level < RunCheck.POOR) bad("Regen bei unter 15 °C gefühlt, Lauf-Check nur Stufe ${r.level}")
         }
         // Stunden, die der Kurzfrist-Verlauf ganz abdeckt, müssen dessen Menge zeigen
         if (f.nowcastRadarUntil > 0) {

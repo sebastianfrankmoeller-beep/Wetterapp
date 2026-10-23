@@ -233,7 +233,7 @@ class RunCard(ctx: Context, private val p: Ui.Palette, private val onTypeChange:
         val col = RunCheck.color(r.level, p)
         dot.background = Ui.oval(col)
         headline.text = r.headline
-        headline.setTextColor(if (r.level == RunCheck.GREEN) p.text else col)
+        headline.setTextColor(if (r.level <= RunCheck.GOOD) p.text else col)
         reason.text = r.reason
         typePill.text = RunCheck.TYPE_NAMES[Prefs.runnerType(context)]
         strip.forecast = f
