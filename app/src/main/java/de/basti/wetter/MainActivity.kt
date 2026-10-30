@@ -88,7 +88,6 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         CrashLog.markSeen()
         main.post { ReportDialog.show(this, p, r, null) }
     }
-    }
 
     /** App-Verknüpfungen: Lauf-Check anzeigen bzw. Fahrmodus starten. */
     private fun handleAction(i: Intent?) {
