@@ -7,7 +7,9 @@ class SatLayersTest {
     @Test fun ebenen() {
         for (layer in listOf("mtg_fd/rgb_geocolour", "mtg_fd/ir105_hrfi")) {
             val url = "https://view.eumetsat.int/geoserver/$layer/ows?service=WMS&request=GetCapabilities&version=1.3.0"
-            val xml = runCatching { Net.get(url, 60000) }.getOrElse { println("SAT $layer FEHLER ${it.message}"); continue }
+            val res = runCatching { Net.get(url, 60000) }
+            if (res.isFailure) { println("SAT $layer FEHLER ${res.exceptionOrNull()?.message}"); continue }
+            val xml = res.getOrThrow()
             println("SAT $layer Größe ${xml.length}")
             val dim = Regex("<Dimension[^>]*name=\"time\"[^>]*>([^<]*)</Dimension>").find(xml)
             val tag = Regex("<Dimension[^>]*name=\"time\"[^>]*>").find(xml)?.value
