@@ -10,6 +10,8 @@ import kotlin.math.sin
 /**
  * Zeichnet eigene, flache Wettersymbole direkt auf eine Canvas –
  * dieselben Symbole in der App und im Widget.
+ * Alle Zeichenfunktionen sind synchronisiert: App (Vordergrund) und Widget (Hintergrund) teilen sich
+ * Stift und Formen – gleichzeitiges Zeichnen ergab halbe Wolken und konnte im Grafikteil abstürzen.
  */
 object WeatherIcons {
 
@@ -38,6 +40,7 @@ object WeatherIcons {
     }
 
     /** Zeichnet das Symbol zentriert in einem Quadrat der Kantenlänge [size]. */
+    @Synchronized
     fun draw(c: Canvas, code: Int, isDay: Boolean, cx: Float, cy: Float, size: Float, p: Ui.Palette) {
         val s = size / 100f   // Symbole sind auf 100×100 entworfen
         val x0 = cx - 50 * s
@@ -219,6 +222,7 @@ object WeatherIcons {
     }
 
     /** Kleines Blitz-Abzeichen (Gewitterrisiko), zentriert bei (cx, cy). */
+    @Synchronized
     fun boltBadge(c: Canvas, cx: Float, cy: Float, size: Float, color: Int, bg: Int) {
         paint.style = Paint.Style.FILL
         paint.color = bg
@@ -228,6 +232,7 @@ object WeatherIcons {
     }
 
     /** Windpfeil: zeigt, wohin der Wind weht (Richtungsangabe = woher). */
+    @Synchronized
     fun windArrow(c: Canvas, cx: Float, cy: Float, size: Float, fromDeg: Double, color: Int) {
         if (fromDeg.isNaN()) return
         c.save()

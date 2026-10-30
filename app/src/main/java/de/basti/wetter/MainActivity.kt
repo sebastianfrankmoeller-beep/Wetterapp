@@ -80,28 +80,14 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
         showCrashReport()
     }
 
-    /** Nach einem Absturz: Bericht einmal anzeigen, zum Kopieren in den Chat. */
+    /** Nach einem Absturz: neuen Bericht einmal anzeigen (bleibt unter Einstellungen → Fehlerberichte). */
     private fun showCrashReport() {
-        val report = CrashLog.pending(this) ?: return
-        CrashLog.clear(this)
-        main.post {
-            if (isFinishing) return@post
-            val tv = Ui.tv(this, report, 11.5f, p.text).apply {
-                typeface = android.graphics.Typeface.MONOSPACE
-                setTextIsSelectable(true)
-                setPadding(dp(20), dp(8), dp(20), dp(8))
-            }
-            AlertDialog.Builder(this, dialogTheme())
-                .setTitle(if (report.contains("abgefangen")) "Ein Fehler wurde abgefangen" else "Die App wurde zuletzt unerwartet beendet")
-                .setView(android.widget.ScrollView(this).apply { addView(tv) })
-                .setPositiveButton("Bericht kopieren") { _, _ ->
-                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Absturzbericht", report))
-                    android.widget.Toast.makeText(this, "Kopiert – bitte im Chat einfügen", android.widget.Toast.LENGTH_LONG).show()
-                }
-                .setNegativeButton("Schließen", null)
-                .show()
-        }
+        CrashLog.migrate(this)
+        CrashLog.checkExitReasons(this)
+        val r = CrashLog.unseen(this) ?: return
+        CrashLog.markSeen()
+        main.post { ReportDialog.show(this, p, r, null) }
+    }
     }
 
     /** App-Verknüpfungen: Lauf-Check anzeigen bzw. Fahrmodus starten. */

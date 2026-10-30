@@ -130,6 +130,18 @@ class SettingsActivity : Activity() {
     }
 
     private val REQ_IMAGE = 41
+    private val REQ_SAVE = 42
+    private var saving: CrashLog.Report? = null
+
+    /** Bericht als Textdatei speichern – Android fragt nach dem Ort (z. B. Downloads). */
+    private fun saveReport(r: CrashLog.Report) {
+        saving = r
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("text/plain").putExtra(Intent.EXTRA_TITLE, ReportDialog.fileName(r))
+        runCatching { startActivityForResult(i, REQ_SAVE) }.onFailure {
+            Toast.makeText(this, "Speichern nicht möglich – bitte „Teilen“ nutzen", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun pickImage() {
         val i = if (Build.VERSION.SDK_INT >= 33) Intent("android.provider.action.PICK_IMAGES").setType("image/*")
@@ -142,6 +154,15 @@ class SettingsActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SAVE) {
+            val r = saving; val uri = data?.data
+            if (resultCode == RESULT_OK && r != null && uri != null) {
+                val ok = runCatching { contentResolver.openOutputStream(uri)?.use { it.write(r.text.toByteArray()) } }.isSuccess
+                Toast.makeText(this, if (ok) "Gespeichert – die Datei kannst du im Chat anhängen" else "Speichern fehlgeschlagen", Toast.LENGTH_LONG).show()
+            }
+            saving = null
+            return
+        }
         if (requestCode != REQ_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         Toast.makeText(this, "Bild wird übernommen …", Toast.LENGTH_SHORT).show()
@@ -425,6 +446,21 @@ class SettingsActivity : Activity() {
             })
         }
         add(card(*perm.toTypedArray()), 24)
+
+        // ---------------------------------------------------------- Fehlerberichte
+        add(section("Fehlerberichte"), 8)
+        CrashLog.checkExitReasons(this)
+        val reports = CrashLog.all(this)
+        val repRows = ArrayList<View>()
+        if (reports.isEmpty()) repRows.add(row(textCol("Keine Fehler aufgezeichnet", "Abstürze und von Android beendete Läufe erscheinen hier."), View(this)))
+        for (r in reports) repRows.add(row(textCol(ReportDialog.label(r), ReportDialog.title(r)),
+            Ui.tv(this, "›", 22f, p.muted, true)).apply {
+            setOnClickListener { ReportDialog.show(this@SettingsActivity, p, r) { saveReport(r) } }
+        })
+        if (reports.isNotEmpty()) repRows.add(actionRow("Alle löschen", "Gespeichert werden die letzten 5 Berichte.", "Löschen") {
+            CrashLog.clearAll(this); build()
+        })
+        add(card(*repRows.toTypedArray()), 24)
 
         add(note("Daten: Open-Meteo (DWD ICON-D2, ECMWF IFS), Deutscher Wetterdienst (Radar, Warnungen). " +
             "Karten © OpenStreetMap-Mitwirkende."), 0)

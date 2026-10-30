@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          gradle :app:testDebugUnitTest --tests 'de.basti.wetter.DatenCheckTest' 2>&1 | tee test.log
+          gradle :app:testDebugUnitTest --tests 'de.basti.wetter.DatenCheckTest' --tests 'de.basti.wetter.SatLayersTest' 2>&1 | tee test.log
       - name: Bericht
         if: always()
         shell: bash
@@ -42,6 +42,11 @@ jobs:
               print(f"::notice title=Datencheck {title}::{msg}")
           PY
           fi
+      - name: Satellit
+        if: always()
+        shell: bash
+        run: |
+          grep -E "^SAT |  SAT " test.log | head -30 | while IFS= read -r l; do echo "::notice title=Satellit::$l"; done || true
       - name: Testergebnisse
         if: always()
         shell: bash
