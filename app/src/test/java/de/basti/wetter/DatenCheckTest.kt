@@ -392,6 +392,21 @@ class DatenCheckTest {
         }
     }
 
+    @Test fun wolkenbildLaedt() {
+        // Satellitenbild (EUMETSAT, Meteosat MTG): jüngstes Bild höchstens 60 Min. alt, Kachel kommt als Bild
+        val latest = CloudOverlay.latest()
+        val age = System.currentTimeMillis() / 1000 - latest
+        println("SAT jüngstes Bild vor ${age / 60} Min.")
+        assertTrue("Satellitenbild zu alt: ${age / 60} Min.", age in 0..3600)
+        val frames = CloudOverlay.framesUntil(latest)
+        assertEquals(10, frames.size)
+        val url = "https://view.eumetsat.int/geoserver/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
+            "&LAYERS=${CloudOverlay.LAYER}&STYLES=&FORMAT=image/jpeg&CRS=EPSG:3857&WIDTH=256&HEIGHT=256" +
+            "&BBOX=${Tiles.bbox3857(33, 20, 6)}&TIME=${CloudOverlay.iso(frames.first())}"
+        val b = Net.getBytes(url, 30000)
+        assertTrue("Kachel fehlt (${b?.size} Bytes)", b != null && b.size > 2000 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte())
+    }
+
     @Test fun windkarteLaedt() {
         // Europa-Übersicht (12 × 10) und ein feiner Ausschnitt um Flensburg
         val base = runCatching { WindGrid.fetchArea(34.0, 72.0, -25.0, 45.0, 12, 10).first }

@@ -111,6 +111,10 @@ object Prefs {
     fun bgLuminance(ctx: Context) = sp(ctx).getFloat("st_bglum", 0.5f)
     fun setBgLuminance(ctx: Context, v: Float) = sp(ctx).edit().putFloat("st_bglum", v).apply()
 
+    /** Radar-Seite: 0 = Regen, 1 = Wolken (Satellit), 2 = beides. */
+    fun radarMode(ctx: Context) = sp(ctx).getInt("radar_mode", 0)
+    fun setRadarMode(ctx: Context, v: Int) = sp(ctx).edit().putInt("radar_mode", v.coerceIn(0, 2)).apply()
+
     /** Deckkraft des Regenradars in Prozent (15–100). */
     fun radarOpacity(ctx: Context) = sp(ctx).getInt("radar_opacity", 60)
     fun setRadarOpacity(ctx: Context, v: Int) = sp(ctx).edit().putInt("radar_opacity", v.coerceIn(15, 100)).apply()

@@ -161,7 +161,7 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
 
     /** Lädt zuerst die Kacheln des aktuellen Bildes, danach alle übrigen Bilder vor. */
     fun schedule() {
-        if (frames.isEmpty()) return
+        if (frames.isEmpty() || !isEnabled) return
         val measured = frames.filter { it <= (run ?: Long.MAX_VALUE) }
         if (measured.isNotEmpty()) world.schedule(measured, frame.coerceAtMost(measured.size - 1))
         queue.clear()
@@ -300,6 +300,12 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     val map: MapView = MapSupport.createMap(ctx, p, center, 7.2)
     private val marker = PlaceMarker(p, resources.displayMetrics.density)
     private val overlay = RadarOverlay(map) { updateLabel() }
+    private val clouds = CloudOverlay(map) { updateLabel() }
+    private var mode = Prefs.radarMode(ctx)
+    private var cloudLoadedAt = 0L
+    private val modeButtons = ArrayList<TextView>()
+    private lateinit var legend: View
+    private lateinit var opacityRow: View
     private val warnOverlay = WarnMapOverlay(map)
     private lateinit var warnToggle: TextView
     private lateinit var warnLegend: LinearLayout
@@ -315,15 +321,17 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
     private val ticker = object : Runnable {
         override fun run() {
-            if (!playing || overlay.frames.isEmpty()) return
-            val next = (overlay.frame + 1) % overlay.frames.size
+            val fr = curFrames()
+            if (!playing || fr.isEmpty()) return
+            val next = (curFrame() + 1) % fr.size
             setFrame(next)
-            main.postDelayed(this, if (next == overlay.frames.size - 1) 1400 else 550)
+            main.postDelayed(this, if (next == fr.size - 1) 1400 else 550)
         }
     }
 
     init {
         setBackgroundColor(p.bg)
+        map.overlays.add(clouds)               // Wolkenbild ganz unten, Regen darüber
         map.overlays.add(warnOverlay)
         map.overlays.add(overlay)
         map.overlays.add(marker)
@@ -333,8 +341,8 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         marker.point = center
         addView(map, LayoutParams(MATCH, MATCH))
         map.addMapListener(object : MapListener {
-            override fun onScroll(event: ScrollEvent?): Boolean { overlay.schedule(); warnOverlay.schedule(); return false }
-            override fun onZoom(event: ZoomEvent?): Boolean { overlay.schedule(); warnOverlay.schedule(); return false }
+            override fun onScroll(event: ScrollEvent?): Boolean { overlay.schedule(); clouds.schedule(); warnOverlay.schedule(); return false }
+            override fun onZoom(event: ZoomEvent?): Boolean { overlay.schedule(); clouds.schedule(); warnOverlay.schedule(); return false }
         })
 
         // ------------------------------------------------- Steuerung unten
@@ -357,11 +365,12 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
                     addView(timeLabel)
                     addView(subLabel, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
                 }, LinearLayout.LayoutParams(0, WRAP, 1f))
-                addView(LegendView(ctx, p), LinearLayout.LayoutParams(dp(96), dp(30)))
+                addView(LegendView(ctx, p).also { legend = it }, LinearLayout.LayoutParams(dp(96), dp(30)))
             })
             addView(timeline, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8) })
             // Deckkraft des Radars: stufenlos, bewusst schlichter als die Zeitleiste
             addView(LinearLayout(ctx).apply {
+                opacityRow = this
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 addView(DropIcon(ctx, p.muted), LinearLayout.LayoutParams(dp(14), dp(16)).apply { leftMargin = dp(6) })
@@ -399,10 +408,24 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
-                setPadding(dp(14), dp(4), dp(4), dp(4))
-                addView(Ui.tv(ctx, "Regenradar", 15f, p.text, true), LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(10) })
-                addView(warnToggle)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                // Umschalter Regen | Wolken | Beides
+                for ((i, name) in listOf("Regen", "Wolken", "Beides").withIndex()) {
+                    val b = Ui.tv(ctx, name, 14f, p.text, true).apply {
+                        gravity = Gravity.CENTER
+                        setPadding(dp(14), dp(8), dp(14), dp(8))
+                        setOnClickListener { setMode(i) }
+                    }
+                    modeButtons.add(b)
+                    addView(b, LinearLayout.LayoutParams(WRAP, WRAP))
+                }
             }, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = Ui.rect(Ui.withAlpha(p.surface, 240), dpf(22), p.border, 1)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                addView(warnToggle)
+            }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(8) })
             // Legende der Warnstufen (nur bei eingeschalteter Warnkarte)
             warnLegend = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -438,7 +461,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         }, LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
 
         // Quellenangabe
-        addView(Ui.tv(ctx, "Radar © DWD, Weather data by Rain Viewer  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
+        addView(Ui.tv(ctx, "Radar © DWD, Weather data by Rain Viewer  ·  Satellit © EUMETSAT  ·  Karte © OpenStreetMap", 9.5f, p.muted).apply {
             setShadowLayer(4f, 0f, 0f, p.bg)
             setOnClickListener {
                 runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.rainviewer.com"))) }
@@ -447,6 +470,53 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
         timeline.onChange = { setFrame(it); stop() }
         loadFrames()
+        setMode(mode)
+    }
+
+    // ------------------------------------------------- Regen | Wolken | Beides
+
+    private fun curFrames(): List<Long> = if (mode == 1) clouds.frames else overlay.frames
+    private fun curFrame(): Int = if (mode == 1) clouds.frame else overlay.frame
+
+    private fun setMode(m: Int) {
+        mode = m
+        Prefs.setRadarMode(context, m)
+        for ((i, b) in modeButtons.withIndex()) {
+            val on = i == m
+            b.background = if (on) Ui.rect(p.accent, dpf(18)) else Ui.pressable(p, Ui.withAlpha(p.surface, 0), dpf(18))
+            b.setTextColor(if (on) p.onAccent else p.text)
+        }
+        clouds.isEnabled = m != 0
+        overlay.isEnabled = m != 1
+        legend.visibility = if (m == 1) View.INVISIBLE else View.VISIBLE
+        opacityRow.visibility = if (m == 1) View.GONE else View.VISIBLE
+        stop()
+        if (m != 0) loadCloudFrames()
+        val fr = curFrames()
+        timeline.steps = max(1, fr.size)
+        timeline.nowIndex = if (m == 1) max(0, fr.size - 1) else nowIdx
+        if (fr.isNotEmpty()) setFrame(if (m == 1) fr.size - 1 else nowIdx.coerceIn(0, fr.size - 1)) else updateLabel()
+        map.invalidate()
+    }
+
+    /** Satellitenzeiten neu bestimmen (beim Einschalten und nach > 10 Minuten). */
+    private fun loadCloudFrames() {
+        if (System.currentTimeMillis() - cloudLoadedAt < 10 * 60_000 && clouds.frames.isNotEmpty()) return
+        cloudLoadedAt = System.currentTimeMillis()
+        Thread {
+            val list = CloudOverlay.framesUntil(CloudOverlay.latest())
+            main.post {
+                clouds.frames = list
+                if (mode == 1) {
+                    timeline.steps = list.size
+                    timeline.nowIndex = list.size - 1
+                    setFrame(list.size - 1)
+                } else if (mode == 2) {
+                    clouds.followTime = overlay.frames.getOrNull(overlay.frame)
+                    updateLabel()
+                }
+            }
+        }.start()
     }
 
     private fun setWarnLayer(on: Boolean) {
@@ -497,6 +567,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         marker.point = g
         map.controller.setCenter(g)
         overlay.schedule()
+        clouds.schedule()
     }
 
     /** Bildzeiten neu bestimmen (beim Öffnen und nach > 5 Minuten). */
@@ -518,20 +589,29 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
                 overlay.run = base
                 overlay.frames = list
                 nowIdx = 6
-                timeline.steps = list.size
-                timeline.nowIndex = nowIdx
-                setFrame(nowIdx)
+                if (mode != 1) {
+                    timeline.steps = list.size
+                    timeline.nowIndex = nowIdx
+                    setFrame(nowIdx)
+                } else overlay.frame = nowIdx
             }
         }.start()
     }
 
     private fun setFrame(i: Int) {
-        overlay.frame = i
+        if (mode == 1) {
+            clouds.followTime = null
+            clouds.frame = i
+        } else {
+            overlay.frame = i
+            if (mode == 2) clouds.followTime = overlay.frames.getOrNull(i)
+        }
         timeline.setIndex(i, false)
         updateLabel()
     }
 
     private fun updateLabel() {
+        if (mode == 1) { updateCloudLabel(); return }
         val fr = overlay.frames
         if (fr.isEmpty()) return
         val t = fr[overlay.frame]
@@ -545,6 +625,23 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         }
         val ready = overlay.readyFrames()
         val kind = if (diff > 0) "Vorhersage · nur DWD-Gebiet" else "Messung"
+        val wolken = if (mode == 2) clouds.shownTime()?.let { "  ·  Wolken ${hhmm(it)}" } ?: "" else ""
+        subLabel.text = (if (ready < fr.size) "$kind  ·  lade $ready/${fr.size}" else kind) + wolken
+    }
+
+    private fun hhmm(t: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = t * 1000 }
+        return "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+    }
+
+    private fun updateCloudLabel() {
+        val fr = clouds.frames
+        if (fr.isEmpty()) { timeLabel.text = "Wolkenbild"; subLabel.text = "Lade Satellitenbilder …"; return }
+        val t = fr[clouds.frame.coerceIn(0, fr.size - 1)]
+        val ago = ((System.currentTimeMillis() / 1000 - t) / 60).toInt()
+        timeLabel.text = "${hhmm(t)}  ·  vor $ago min"
+        val ready = clouds.readyFrames()
+        val kind = "Satellitenbild Meteosat"
         subLabel.text = if (ready < fr.size) "$kind  ·  lade $ready/${fr.size}" else kind
     }
 
@@ -563,9 +660,9 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         main.removeCallbacks(ticker)
     }
 
-    fun onResume() { map.onResume(); loadFrames() }
+    fun onResume() { map.onResume(); loadFrames(); if (mode != 0) loadCloudFrames() }
     fun onPause() { stop(); map.onPause() }
-    fun destroy() { overlay.destroy(); warnOverlay.destroy(); map.onDetach() }
+    fun destroy() { overlay.destroy(); clouds.destroy(); warnOverlay.destroy(); map.onDetach() }
 }
 
 /**

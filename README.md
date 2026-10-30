@@ -43,6 +43,9 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   abspielbar, mit Zeitleiste. **Weltweit**: außerhalb des DWD-Gebiets automatisch Radar von Rain Viewer
   (nur Messungen, gröber). Küsten, Grenzen und Ortsnamen liegen über dem Radar; **Deckkraft-Regler** im Bedienfeld. Zuschaltbare **Warnkarte** mit Legende –
   Karte antippen zeigt die Warnungen an dieser Stelle
+- **Wolkenbild** (Radar-Seite, Umschalter **Regen | Wolken | Beides**): Satellitenbild von Meteosat (EUMETSAT,
+  „Geo Colour“: tagsüber natürliche Farben, nachts Infrarot), alle 10 Min. neu, ca. 15–20 Min. Verzögerung,
+  Zeitleiste über 3 Stunden. „Beides“ legt den Regen über die Wolken
 - **Windkarte**: Ebenen **Wind | Böen | Gewitter**, fließende Partikel, 48 Stunden per Zeitleiste.
   Grobe **Europa-Übersicht** (alle 3 Std.) als Grundlage, beim Hineinzoomen feiner Ausschnitt darüber.
   Die App zählt ihren Open-Meteo-Verbrauch; ab 7.000 am Tag nur noch Übersicht (Hinweis auf der Karte).
@@ -62,8 +65,9 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
 - **Eigenes Aussehen** (Einstellungen → Darstellung → Anpassen): Akzentfarbe und Hintergrundton
   frei wählbar per Farbwähler (Farbfeld + Farbton, stufenlos, Live-Vorschau beim Ziehen, Hinweis bei schlechter Lesbarkeit), Hintergrund (neutral, Verlauf oder eigenes Bild – auch HEIC, richtig gedreht,
   weichgezeichnet und automatisch abgedunkelt), Schrift (Modern/Kompakt/Rund, Größe), Ecken
-- **Absturzbericht**: Nach einem Absturz zeigt die App beim nächsten Start einmal den Bericht
-  (Fehlerstelle, Version, letzte Aktionen) mit „Bericht kopieren“. Fehler in Hintergrund-Abläufen und beim
+- **Fehlerberichte** (Einstellungen → Fehlerberichte): letzte 5 Berichte mit Speichern, Teilen, Kopieren –
+  eigene Abstürze und, ab Android 11, warum Android die App beendet hat (Speicher, Hängen, Grafikabsturz).
+  Nach einem Absturz erscheint der Bericht einmal beim nächsten Start. Fehler in Hintergrund-Abläufen und beim
   Anzeigen der Daten werden abgefangen, die App läuft weiter und speichert einen Bericht
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 
@@ -122,6 +126,7 @@ Karte in der Vorhersage (oder App-Symbol lange drücken → *Lauf-Check*), immer
 | danach bis 15 Tage (und außerhalb des D2-Gebiets) | **ECMWF IFS HRES** | 9 km |
 | Regenwahrscheinlichkeit | ECMWF-Ensemble | – |
 | Radar | DWD Radarverbund + Nowcast; weltweit Rain Viewer | 1 km, 5 min |
+| Wolkenbild | EUMETSAT Meteosat (MTG FCI, Geo Colour) | 1–2 km, 10 min |
 | Regen nächste 2 Std. | DWD-Radar (RADOLAN RV) via Bright Sky | 1 km, 5 min |
 | Jetzt-Werte | DWD-Stationsmessungen (SYNOP) via Bright Sky | nächste Station ≤ 25 km |
 | Windkarte, Böen, Gewitter-Potenzial | DWD ICON (D2/EU/global, nahtlos) | – |
