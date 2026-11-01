@@ -47,8 +47,21 @@ class WeatherWidget : AppWidgetProvider() {
 
     companion object {
 
+        /**
+         * Ist die App im Vordergrund, zeichnet das Widget nicht parallel (App und Widget teilten sich dabei
+         * Teile des Grafiksystems – Absturzgefahr). Es wird dann beim Verlassen der App nachgeholt.
+         */
+        @Volatile var appForeground = false
+        @Volatile var pending = false
+
+        /** Beim Verlassen der App: zurückgehaltenes Neuzeichnen nachholen. */
+        fun flush(ctx: Context) {
+            if (pending) { pending = false; updateAll(ctx) }
+        }
+
         /** Alle Widgets neu zeichnen (nach dem Laden in der App, nur Zwischenspeicher). */
         fun updateAll(ctx: Context) {
+            if (appForeground) { pending = true; return }
             val app = ctx.applicationContext
             val mgr = AppWidgetManager.getInstance(app)
             val ids = mgr.getAppWidgetIds(ComponentName(app, WeatherWidget::class.java))
@@ -67,6 +80,8 @@ class WeatherWidget : AppWidgetProvider() {
 
         /** Zeichnet ein Widget; lädt bei Bedarf frische Daten (Hintergrund-Thread!). */
         fun update(ctx: Context, mgr: AppWidgetManager, id: Int, allowFetch: Boolean) {
+            if (appForeground) { pending = true; return }
+            de.basti.wetter.CrashLog.note("Widget zeichnen")
             val placeId = Prefs.widgetPlace(ctx, id)
             val isLoc = placeId == Prefs.CURRENT
 

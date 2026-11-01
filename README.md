@@ -67,7 +67,8 @@ gleiche Designsprache wie der Tempowarner (Dunkelmodus als Standard).
   weichgezeichnet und automatisch abgedunkelt), Schrift (Modern/Kompakt/Rund, Größe), Ecken
 - **Fehlerberichte** (Einstellungen → Fehlerberichte): letzte 5 Berichte mit Speichern, Teilen, Kopieren –
   eigene Abstürze und, ab Android 11, warum Android die App beendet hat (Speicher, Hängen, Grafikabsturz).
-  Nach einem Absturz erscheint der Bericht einmal beim nächsten Start. Fehler in Hintergrund-Abläufen und beim
+  Nach einem Absturz erscheint der Bericht einmal beim nächsten Start. Bei Abstürzen im Grafik-/Systemteil enthält der Bericht
+  die Absturzstelle aus dem Android-Protokoll. Das Widget zeichnet nicht, solange die App offen ist, sondern beim Verlassen. Fehler in Hintergrund-Abläufen und beim
   Anzeigen der Daten werden abgefangen, die App läuft weiter und speichert einen Bericht
 - **Einstellungen** (Zahnrad oben rechts): Darstellung, Lauf-Check, Fahrmodus, Warnungen, Berechtigungen
 

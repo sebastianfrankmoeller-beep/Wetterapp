@@ -96,6 +96,9 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
 
     var frames: List<Long> = emptyList()
     var run: Long? = null          // jüngster Nowcast-Lauf (= letztes gemessenes Bild)
+    /** Alter Stand (wird gerade neu geladen): blass zeigen. */
+    var stale = false
+        set(v) { field = v; map.postInvalidate() }
     var frame = 0
         set(v) { field = v; schedule(); map.postInvalidate() }
 
@@ -224,7 +227,7 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
 
     override fun draw(c: Canvas, mv: MapView, shadow: Boolean) {
         if (shadow || frames.isEmpty()) return
-        paint.alpha = RadarStyle.alpha
+        paint.alpha = if (stale) RadarStyle.alpha / 3 else RadarStyle.alpha
         val t = frames[frame.coerceIn(0, frames.size - 1)]
         val pj = mv.projection
 
@@ -318,6 +321,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     private var playing = false
     private var nowIdx = 0
     private var loadedAt = 0L
+    @Volatile private var framesLoading = false
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -480,6 +484,7 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
 
     private fun setMode(m: Int) {
         mode = m
+        CrashLog.note("Radar: ${listOf("Regen", "Wolken", "Beides")[m]}")
         Prefs.setRadarMode(context, m)
         for ((i, b) in modeButtons.withIndex()) {
             val on = i == m
@@ -571,10 +576,23 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
     }
 
     /** Bildzeiten neu bestimmen (beim Öffnen und nach > 5 Minuten). */
+    /** Beim Öffnen der App schon die Radarzeiten holen (auch wenn gerade eine andere Seite offen ist). */
+    fun prefetch() = loadFrames()
+
+    /** Ist der geladene Stand älter als 15 Minuten? Dann nicht als "Jetzt" zeigen. */
+    private fun stale(): Boolean {
+        val fr = overlay.frames
+        if (fr.isEmpty()) return false
+        return System.currentTimeMillis() / 1000 - fr[nowIdx.coerceIn(0, fr.size - 1)] > 15 * 60
+    }
+
     fun loadFrames() {
         if (System.currentTimeMillis() - loadedAt < 5 * 60_000 && overlay.frames.isNotEmpty()) return
         loadedAt = System.currentTimeMillis()
-        subLabel.text = "Lade Radar …"
+        framesLoading = true
+        overlay.stale = stale()
+        updateLabel()
+        map.invalidate()
         Thread {
             val run = RadarOverlay.latestRun()
             overlay.world.refresh()
@@ -586,8 +604,10 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
             list.add(base)
             for (k in 1..8) list.add(base + k * step)
             main.post {
+                framesLoading = false
                 overlay.run = base
                 overlay.frames = list
+                overlay.stale = false
                 nowIdx = 6
                 if (mode != 1) {
                     timeline.steps = list.size
@@ -614,19 +634,29 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         if (mode == 1) { updateCloudLabel(); return }
         val fr = overlay.frames
         if (fr.isEmpty()) return
-        val t = fr[overlay.frame]
-        val cal = Calendar.getInstance().apply { timeInMillis = t * 1000 }
-        val clock = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
-        val diff = ((t - fr[nowIdx]) / 60).toInt()
+        val t = fr[overlay.frame.coerceIn(0, fr.size - 1)]
+        val clock = hhmm(t)
+        val diff = ((t - fr[nowIdx.coerceIn(0, fr.size - 1)]) / 60).toInt()
+        val old = stale()
+        // Zeitangabe nach der echten Uhrzeit – ein alter Stand heißt nie "Jetzt"
+        val real = ((System.currentTimeMillis() / 1000 - t) / 60).toInt()
+        fun dur(m: Int) = if (m < 60) "$m min" else if (m % 60 == 0) "${m / 60} Std." else "${m / 60} Std. ${m % 60} min"
         timeLabel.text = when {
-            diff == 0 -> "$clock  ·  Jetzt"
-            diff < 0 -> "$clock  ·  vor ${-diff} min"
-            else -> "$clock  ·  in $diff min"
+            !old && diff == 0 -> "$clock  ·  Jetzt"
+            !old && diff < 0 -> "$clock  ·  vor ${-diff} min"
+            !old -> "$clock  ·  in $diff min"
+            real >= 0 -> "$clock  ·  vor ${dur(real)}"
+            else -> "$clock  ·  in ${dur(-real)}"
         }
         val ready = overlay.readyFrames()
         val kind = if (diff > 0) "Vorhersage · nur DWD-Gebiet" else "Messung"
         val wolken = if (mode == 2) clouds.shownTime()?.let { "  ·  Wolken ${hhmm(it)}" } ?: "" else ""
-        subLabel.text = (if (ready < fr.size) "$kind  ·  lade $ready/${fr.size}" else kind) + wolken
+        subLabel.text = when {
+            old && framesLoading -> "Lade aktuelles Radar …"
+            old -> "Alter Stand – aktuelles Radar nicht erreichbar"
+            ready < fr.size -> "$kind  ·  lade $ready/${fr.size}"
+            else -> kind
+        } + wolken
     }
 
     private fun hhmm(t: Long): String {

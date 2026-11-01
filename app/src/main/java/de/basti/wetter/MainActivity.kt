@@ -608,11 +608,12 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
     override fun onResume() {
         super.onResume()
         CrashLog.note("App im Vordergrund")
+        WeatherWidget.appForeground = true
         if (Prefs.theme(this) * 100000 + Prefs.styleVersion(this) != themeAtStart) { recreate(); return }
         // Noch nichts angezeigt (z. B. Standort erst in den Einstellungen erlaubt/eingeschaltet) → erneut versuchen
         if (shown == null && Prefs.selected(this) == Prefs.CURRENT && Locator.hasPermission(this) && !firstResume) locateAndLoad()
         firstResume = false
-        if (tab == 1) radarPage?.onResume()
+        if (tab == 1) radarPage?.onResume() else radarPage?.prefetch()   // Radarzeiten schon beim Öffnen holen
         if (tab == 2) windPage?.onResume()
         // Nach längerer Pause automatisch aktualisieren
         val f = shown
@@ -626,6 +627,8 @@ class MainActivity : Activity(), ForecastPage.Callbacks, SearchPanel.Callbacks {
 
     override fun onPause() {
         super.onPause()
+        WeatherWidget.appForeground = false
+        WeatherWidget.flush(this)
         main.removeCallbacks(obsTick)
         radarPage?.onPause()
         windPage?.onPause()

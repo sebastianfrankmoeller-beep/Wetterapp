@@ -55,7 +55,8 @@ object CrashLog {
             while (steps.size > MAX_STEPS) steps.removeFirst()
             steps.joinToString("\n")
         }
-        sp()?.edit()?.putString("cl_steps", joined)?.apply()
+        // sofort schreiben (commit statt apply): muss auch einen nativen Absturz direkt danach überstehen
+        sp()?.edit()?.putString("cl_steps", joined)?.commit()
     }
 
     private fun dir(ctx: Context) = File(ctx.filesDir, DIR).also { it.mkdirs() }
@@ -140,6 +141,16 @@ object CrashLog {
                     info.description?.let { append("Beschreibung: ").append(it).append('\n') }
                     append("\nLetzte Aktionen vor dem Ende:\n")
                     if (previousSteps.isEmpty()) append("  –\n") else previousSteps.forEach { append("  ").append(it).append('\n') }
+                    // Bei nativem Absturz: Funktionsliste aus dem Android-Absturzprotokoll (Tombstone)
+                    if (info.reason == ApplicationExitInfo.REASON_CRASH_NATIVE) runCatching {
+                        info.traceInputStream?.use { ins ->
+                            val lines = tombstoneStrings(ins.readBytes())
+                            if (lines.isNotEmpty()) {
+                                append("\nAbsturzstelle (Auszug aus dem Android-Protokoll):\n")
+                                lines.forEach { append("  ").append(it).append('\n') }
+                            }
+                        }
+                    }
                     // Bei "hing": Ausschnitt des Hauptablaufs aus dem System-Protokoll
                     if (info.reason == ApplicationExitInfo.REASON_ANR) runCatching {
                         info.traceInputStream?.bufferedReader()?.use { r ->
@@ -156,6 +167,30 @@ object CrashLog {
             }
             sp()?.edit()?.putLong("cl_exit_seen", newest)?.apply()
         }
+    }
+
+    /**
+     * Das Absturzprotokoll ist binär (Protobuf); lesbare Texte darin sind Signal, Abbruchmeldung,
+     * Thread-Namen sowie Bibliotheken und Funktionen des Absturzstapels.
+     */
+    private fun tombstoneStrings(b: ByteArray): List<String> {
+        val out = ArrayList<String>()
+        val sb = StringBuilder()
+        fun flush() {
+            val s = sb.toString().trim()
+            sb.setLength(0)
+            if (s.length < 5) return
+            val keep = s.contains(".so") || s.contains("::") || s.contains("SIG") || s.contains("abort", true) ||
+                s.contains("de.basti") || s.contains("Fatal") || s.contains("hwui") || s.contains("skia", true) ||
+                s.contains("RenderThread") || s.contains("main") && s.length < 40
+            if (keep && (out.isEmpty() || out.last() != s)) out.add(s.take(160))
+        }
+        for (x in b) {
+            val c = x.toInt() and 0xFF
+            if (c in 32..126) sb.append(c.toChar()) else flush()
+        }
+        flush()
+        return out.take(60)
     }
 
     /** Alle gespeicherten Berichte, neueste zuerst. */
