@@ -392,6 +392,19 @@ class DatenCheckTest {
         }
     }
 
+    @Test fun regenradarAktuell() {
+        // DWD-Radar (WMS): jüngster Nowcast-Lauf aus den Angaben des Dienstes
+        val xml = Net.get("https://maps.dwd.de/geoserver/dwd/Radar_wn-product_1x1km_ger/ows?service=WMS&version=1.3.0&request=GetCapabilities", 20000)
+        val ref = Regex("<Dimension[^>]*name=\"REFERENCE_TIME\"[^>]*>([^<]*)<").find(xml)?.groupValues?.get(1) ?: ""
+        val tim = Regex("<Dimension[^>]*name=\"time\"[^>]*>([^<]*)<").find(xml)?.groupValues?.get(1) ?: ""
+        println("SAT DWD REFERENCE_TIME (${ref.length}) Ende: ${ref.takeLast(160)}")
+        println("SAT DWD time (${tim.length}) Ende: ${tim.takeLast(160)}")
+        val run = RadarOverlay.latestRun()
+        val age = run?.let { (System.currentTimeMillis() / 1000 - it) / 60 }
+        println("SAT DWD jüngster Lauf vor $age Min.")
+        assertTrue("DWD-Radar veraltet: $age Min.", age != null && age < 45)
+    }
+
     @Test fun wolkenbildLaedt() {
         // Satellitenbild (EUMETSAT, Meteosat MTG): jüngstes Bild höchstens 60 Min. alt, Kachel kommt als Bild
         val latest = CloudOverlay.latest()
