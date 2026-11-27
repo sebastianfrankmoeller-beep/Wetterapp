@@ -31,6 +31,7 @@ import java.util.Collections
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingDeque
 import kotlin.math.PI
 import kotlin.math.abs
@@ -89,35 +90,50 @@ class PlaceMarker(private val p: Ui.Palette, private val density: Float) : Overl
 /**
  * Regenradar des Deutschen Wetterdienstes (WMS, 1-km-Raster, 5-Minuten-Takt)
  * inklusive der DWD-Kurzfristvorhersage (Nowcast) für die nächsten 2 Stunden.
+ * Je Zeitpunkt wird EIN Bild für den Kartenausschnitt geladen. Liefert der DWD nicht,
+ * springt für die Messwerte Rain Viewer ein.
  */
 class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit) : Overlay() {
 
-    data class Key(val time: Long, val run: Long?, val z: Int, val x: Int, val y: Int)
+    /** Kartenausschnitt, auf ganze Kachelgrenzen der Stufe z gerundet. */
+    data class Area(val z: Int, val x0: Int, val x1: Int, val y0: Int, val y1: Int)
+    data class Key(val time: Long, val run: Long?, val area: Area)
 
     var frames: List<Long> = emptyList()
+        set(v) { field = v; failures.clear(); tries.clear() }
     var run: Long? = null          // jüngster Nowcast-Lauf (= letztes gemessenes Bild)
     /** Alter Stand (wird gerade neu geladen): blass zeigen. */
     var stale = false
         set(v) { field = v; map.postInvalidate() }
     var frame = 0
         set(v) { field = v; schedule(); map.postInvalidate() }
+    /** DWD zu langsam oder nicht erreichbar: Rain Viewer auch im DWD-Gebiet zeigen. */
+    @Volatile var fallback = false
+        private set
 
     private val cache = object : LruCache<Key, Bitmap>(cacheBytes()) {
         override fun sizeOf(key: Key, value: Bitmap) = value.byteCount
     }
-    private val empty = Collections.synchronizedSet(HashSet<Key>())   // Kacheln ohne Inhalt
+    private val latest = ConcurrentHashMap<Long, Key>()               // Zeit → zuletzt geladenes Bild
+    private val empty = Collections.synchronizedSet(HashSet<Key>())   // erfolgreich geladen, kein Niederschlag
     private val loading = Collections.synchronizedSet(HashSet<Key>())
+    private val failures = ConcurrentHashMap<Key, Long>()             // frühester nächster Versuch
+    private val tries = ConcurrentHashMap<Key, Int>()
     private val queue = LinkedBlockingDeque<Key>()
     private val main = Handler(Looper.getMainLooper())
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 200 }
     private val a = Point()
     private val b = Point()
     @Volatile private var alive = true
+    private var waitingSince = 0L   // seit wann fehlen Messbilder (nur Haupt-Thread)
 
     /** Weltweites Radar (RainViewer) für alles außerhalb des DWD-Radarverbunds. */
     val world = WorldRadar(map) { main.post { map.invalidate(); onProgress() } }
     private val cut = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT) }
     private val c0 = Point()
+
+    private val lateCheck = Runnable { checkFallback() }
+    private val retry = Runnable { if (map.isShown) schedule() }
 
     init {
         repeat(4) {
@@ -135,72 +151,152 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
 
     fun destroy() {
         alive = false
-        repeat(4) { queue.offer(Key(-1, null, 0, 0, 0)) }
+        main.removeCallbacksAndMessages(null)
+        repeat(4) { queue.offer(Key(-1, null, Area(0, 0, 0, 0, 0))) }
         cache.evictAll()
         world.destroy()
     }
 
-    private fun zoomFor(): Int = floor(map.zoomLevelDouble).toInt().coerceIn(4, 8)
-
-    private fun visible(time: Long): List<Key> {
+    /** Sichtbarer Ausschnitt innerhalb des DWD-Gebiets oder null. */
+    private fun area(): Area? {
         val bb = map.boundingBox
-        val z = zoomFor()
+        val z = floor(map.zoomLevelDouble).toInt().coerceIn(4, 8)
         val n = 1 shl z
-        val x0 = floor(Tiles.xOf(bb.lonWest, z)).toInt().coerceIn(0, n - 1)
-        val x1 = floor(Tiles.xOf(bb.lonEast, z)).toInt().coerceIn(0, n - 1)
+        val ax = floor(Tiles.xOf(bb.lonWest, z)).toInt().coerceIn(0, n - 1)
+        val bx = floor(Tiles.xOf(bb.lonEast, z)).toInt().coerceIn(0, n - 1)
         val y0 = floor(Tiles.yOf(bb.latNorth, z)).toInt().coerceIn(0, n - 1)
         val y1 = floor(Tiles.yOf(bb.latSouth, z)).toInt().coerceIn(0, n - 1)
-        val r = if (time > (run ?: Long.MAX_VALUE)) run else null
-        val out = ArrayList<Key>()
-        // Radar deckt nur Deutschland und Umgebung ab (ca. 45–57° N, 1–19° O)
-        for (x in min(x0, x1)..max(x0, x1)) for (y in y0..y1) {
-            val lonW = Tiles.lonOf(x.toDouble(), z); val lonE = Tiles.lonOf(x + 1.0, z)
-            val latN = Tiles.latOf(y.toDouble(), z); val latS = Tiles.latOf(y + 1.0, z)
-            if (lonE < 1.0 || lonW > 19.5 || latN < 45.0 || latS > 57.5) continue
-            out.add(Key(time, r, z, x, y))
-        }
-        return out
+        // Radar deckt nur Deutschland und Umgebung ab (ca. 45–58° N, 1–20° O)
+        val x0 = max(min(ax, bx), floor(Tiles.xOf(1.0, z)).toInt())
+        val x1 = min(max(ax, bx), floor(Tiles.xOf(20.0, z)).toInt())
+        val top = max(y0, floor(Tiles.yOf(58.0, z)).toInt())
+        val bottom = min(y1, floor(Tiles.yOf(45.0, z)).toInt())
+        if (x0 > x1 || top > bottom) return null
+        return Area(z, x0, x1, top, bottom)
     }
 
-    /** Lädt zuerst die Kacheln des aktuellen Bildes, danach alle übrigen Bilder vor. */
+    private fun keyFor(time: Long, area: Area) = Key(time, if (time > (run ?: Long.MAX_VALUE)) run else null, area)
+
+    private fun done(k: Key) = cache.get(k) != null || k in empty
+
+    private fun measured(t: Long) = t <= (run ?: Long.MAX_VALUE)
+
+    /** Lädt zuerst das aktuelle Bild, danach die folgenden. */
     fun schedule() {
         if (frames.isEmpty() || !isEnabled) return
-        val measured = frames.filter { it <= (run ?: Long.MAX_VALUE) }
-        if (measured.isNotEmpty()) world.schedule(measured, frame.coerceAtMost(measured.size - 1))
+        val past = frames.filter { measured(it) }
+        if (past.isNotEmpty()) world.schedule(past, frame.coerceAtMost(past.size - 1))
         queue.clear()
-        val order = ArrayList<Long>()
-        order.add(frames[frame.coerceIn(0, frames.size - 1)])
-        for (i in 1 until frames.size) {
-            listOf(frame + i, frame - i).forEach { j -> if (j in frames.indices && frames[j] !in order) order.add(frames[j]) }
+        val area = area() ?: return
+        val now = System.currentTimeMillis()
+        val start = frame.coerceIn(0, frames.size - 1)
+        var missing = false
+        for (i in frames.indices) {
+            val k = keyFor(frames[(start + i) % frames.size], area)
+            if (done(k)) continue
+            if (measured(k.time)) missing = true
+            if (k !in loading && now >= (failures[k] ?: 0L)) queue.offer(k)
         }
-        for (t in order) for (k in visible(t)) {
-            if (cache.get(k) == null && k !in empty && k !in loading) queue.offer(k)
+        if (!missing) {
+            waitingSince = 0L
+        } else if (waitingSince == 0L) {
+            waitingSince = now
+            main.removeCallbacks(lateCheck)
+            main.postDelayed(lateCheck, FALLBACK_AFTER_MS)
         }
     }
 
-    /** Anteil fertig geladener Bilder (für die Anzeige). */
-    fun readyFrames(): Int = frames.count { t -> visible(t).all { cache.get(it) != null || it in empty } && (t > (run ?: Long.MAX_VALUE) || world.ready(t)) }
+    /** Fehlt das aktuelle Messbild nach der Wartezeit noch, auf Rain Viewer umschalten. */
+    private fun checkFallback() {
+        if (!alive || fallback || frames.isEmpty()) return
+        val area = area() ?: return
+        val past = frames.filter { measured(it) }
+        if (past.isEmpty()) return
+        val current = past[frame.coerceIn(0, past.size - 1)]
+        if (!done(keyFor(current, area))) useFallback()
+        else waitingSince = 0L   // beim nächsten fehlenden Bild erneut prüfen
+    }
+
+    private fun useFallback() {
+        if (fallback) return
+        fallback = true
+        world.includeDwd = true
+        schedule()
+        map.invalidate()
+        onProgress()
+    }
+
+    private fun dwdReady(t: Long): Boolean { val area = area() ?: return true; return done(keyFor(t, area)) }
+
+    /** Kann dieses Bild gezeigt werden (DWD oder Ersatz)? */
+    fun displayable(t: Long): Boolean =
+        dwdReady(t) || (fallback && measured(t) && world.hasFrame(t) && world.ready(t))
+
+    /** Zeigt das Bild zur Zeit t gerade den Ersatz statt des DWD-Radars? */
+    fun usesFallback(t: Long): Boolean = fallback && !dwdReady(t)
+
+    /** Anzahl anzeigbarer Bilder (für die Anzeige). */
+    fun readyFrames(): Int = frames.count { displayable(it) }
 
     private fun load(k: Key) {
         if (!loading.add(k)) return
+        var ok = false
         try {
-            val iso = iso(k.time)
+            val ar = k.area
+            val span = 2 * Tiles.O / (1 shl ar.z)
+            val minx = -Tiles.O + ar.x0 * span
+            val maxx = -Tiles.O + (ar.x1 + 1) * span
+            val maxy = Tiles.O - ar.y0 * span
+            val miny = Tiles.O - (ar.y1 + 1) * span
+            val nx = ar.x1 - ar.x0 + 1
+            val ny = ar.y1 - ar.y0 + 1
+            val px = min(256, 1024 / max(nx, ny))   // längste Seite höchstens 1024 Pixel
+            val bbox = "%.2f,%.2f,%.2f,%.2f".format(Locale.US, minx, miny, maxx, maxy)
             var url = "https://maps.dwd.de/geoserver/dwd/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
                 "&LAYERS=Radar_wn-product_1x1km_ger&STYLES=&FORMAT=image/png&TRANSPARENT=true" +
-                "&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX=${Tiles.bbox3857(k.x, k.y, k.z)}&TIME=$iso"
+                "&CRS=EPSG:3857&WIDTH=${nx * px}&HEIGHT=${ny * px}&BBOX=$bbox&TIME=${iso(k.time)}"
             if (k.run != null) url += "&DIM_REFERENCE_TIME=${iso(k.run)}"
-            val bytes = Net.getBytes(url, 20000)
+            // Fehlermeldungen des Servers sind kein Bild → Fehlschlag, nie "trocken"
+            val bytes = Net.getBytes(url, 15000)
             val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-            if (bmp == null) {
-                empty.add(k)
-            } else {
+            if (bmp != null) {
                 val clean = stripBackground(bmp)
-                if (clean == null) empty.add(k) else cache.put(k, clean)
+                if (clean == null) {
+                    empty.add(k)
+                    latest.remove(k.time)
+                } else {
+                    cache.put(k, clean)
+                    latest[k.time] = k
+                }
+                ok = true
             }
         } finally {
             loading.remove(k)
         }
-        main.post { map.invalidate(); onProgress() }
+        main.post {
+            if (!alive) return@post
+            if (ok) {
+                failures.remove(k)
+                tries.remove(k)
+                // Alle Messbilder des Ausschnitts da: zurück zum reinen DWD-Radar
+                val area = area()
+                if (fallback && area != null && frames.filter { measured(it) }.all { done(keyFor(it, area)) }) {
+                    fallback = false
+                    waitingSince = 0L
+                    world.includeDwd = false
+                }
+            } else {
+                val n = (tries[k] ?: 0) + 1
+                tries[k] = n
+                val delay = min(60_000L, 3000L * n)
+                failures[k] = System.currentTimeMillis() + delay
+                if (measured(k.time)) useFallback()
+                main.removeCallbacks(retry)
+                main.postDelayed(retry, delay + 100)
+            }
+            map.invalidate()
+            onProgress()
+        }
     }
 
     /** Entfernt die graue Hinterlegung und Umrisslinien des DWD; null, wenn kein Niederschlag. */
@@ -230,12 +326,26 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
         paint.alpha = if (stale) RadarStyle.alpha / 3 else RadarStyle.alpha
         val t = frames[frame.coerceIn(0, frames.size - 1)]
         val pj = mv.projection
+        val current = area()?.let { keyFor(t, it) }
+        // Bestes vorhandenes DWD-Bild: passend zum Ausschnitt, sonst das letzte zu dieser Zeit
+        var shown: Key? = null
+        var bmp: Bitmap? = null
+        val dry = current != null && current in empty
+        if (current != null && !dry) {
+            for (k in listOfNotNull(current, latest[t])) {
+                if (k.run != current.run) continue
+                bmp = cache.get(k) ?: continue
+                shown = k
+                break
+            }
+        }
+        val replace = fallback && !dry && bmp == null
 
-        // 1) Weltradar in eigener Ebene, Gebiet des DWD-Radarverbunds ausgestanzt
-        if (t <= (run ?: Long.MAX_VALUE) && world.hasFrame(t)) {
+        // 1) Weltradar in eigener Ebene; Gebiet des DWD-Radarverbunds ausgestanzt, solange der DWD liefert
+        if (measured(t) && world.hasFrame(t)) {
             val layer = c.saveLayer(null, null)
             world.draw(c, mv, t)
-            for ((lat, lon) in DWD_SITES) {
+            if (!replace) for ((lat, lon) in DWD_SITES) {
                 pj.toPixels(GeoPoint(lat, lon), c0)
                 pj.toPixels(GeoPoint(lat + DWD_RANGE_KM / 111.2, lon), a)
                 val r = abs(c0.y - a.y).toFloat()
@@ -245,23 +355,25 @@ class RadarOverlay(private val map: MapView, private val onProgress: () -> Unit)
         }
 
         // 2) DWD-Radar darüber
-        for (k in visible(t)) {
-            val bmp = cache.get(k) ?: continue
-            pj.toPixels(GeoPoint(Tiles.latOf(k.y.toDouble(), k.z), Tiles.lonOf(k.x.toDouble(), k.z)), a)
-            pj.toPixels(GeoPoint(Tiles.latOf(k.y + 1.0, k.z), Tiles.lonOf(k.x + 1.0, k.z)), b)
-            c.drawBitmap(bmp, null, RectF(a.x - 0.5f, a.y - 0.5f, b.x + 0.5f, b.y + 0.5f), paint)
-        }
+        val k = shown ?: return
+        val image = bmp ?: return
+        val ar = k.area
+        pj.toPixels(GeoPoint(Tiles.latOf(ar.y0.toDouble(), ar.z), Tiles.lonOf(ar.x0.toDouble(), ar.z)), a)
+        pj.toPixels(GeoPoint(Tiles.latOf(ar.y1 + 1.0, ar.z), Tiles.lonOf(ar.x1 + 1.0, ar.z)), b)
+        c.drawBitmap(image, null, RectF(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat()), paint)
     }
 
     companion object {
-        /** Standorte des DWD-Radarverbunds; Reichweite im Komposit ca. 150 km. */
+        private const val FALLBACK_AFTER_MS = 5000L
+
+        /** Standorte des DWD-Radarverbunds; Reichweite seit 24.11.2026: 180 km. */
         val DWD_SITES = listOf(
             53.564 to 6.748, 53.339 to 7.025, 54.004 to 10.047, 51.125 to 13.769, 49.541 to 12.403,
             51.406 to 6.967, 47.874 to 8.004, 51.311 to 8.802, 52.460 to 9.695, 48.175 to 12.102,
             48.042 to 10.219, 50.500 to 11.135, 50.110 to 6.548, 49.985 to 8.712, 52.648 to 13.858,
             54.176 to 12.058, 48.586 to 9.783, 52.160 to 11.176
         )
-        const val DWD_RANGE_KM = 150.0
+        const val DWD_RANGE_KM = 180.0
 
         /** Liegt ein Punkt im Erfassungsbereich des DWD-Radarverbunds? */
         fun inDwd(lat: Double, lon: Double): Boolean = DWD_SITES.any { (la, lo) ->
@@ -327,7 +439,13 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
         override fun run() {
             val fr = curFrames()
             if (!playing || fr.isEmpty()) return
-            val next = (curFrame() + 1) % fr.size
+            var next = (curFrame() + 1) % fr.size
+            if (mode != 1) {
+                // Nur Bilder abspielen, die schon da sind; sonst kurz warten
+                val found = (1 until fr.size).map { (curFrame() + it) % fr.size }.firstOrNull { overlay.displayable(fr[it]) }
+                if (found == null) { main.postDelayed(this, 300); return }
+                next = found
+            }
             setFrame(next)
             main.postDelayed(this, if (next == fr.size - 1) 1400 else 550)
         }
@@ -649,7 +767,12 @@ class RadarPage(ctx: Context, private val p: Ui.Palette, center: GeoPoint) : Fra
             else -> "$clock  ·  in ${dur(-real)}"
         }
         val ready = overlay.readyFrames()
-        val kind = if (diff > 0) "Vorhersage · nur DWD-Gebiet" else "Messung"
+        val kind = when {
+            overlay.usesFallback(t) && diff > 0 -> "DWD antwortet nicht"
+            overlay.usesFallback(t) -> "Ersatz: Rain Viewer"
+            diff > 0 -> "Vorhersage · nur DWD-Gebiet"
+            else -> "Messung"
+        }
         val wolken = if (mode == 2) clouds.shownTime()?.let { "  ·  Wolken ${hhmm(it)}" } ?: "" else ""
         subLabel.text = when {
             old && framesLoading -> "Lade aktuelles Radar …"
@@ -708,9 +831,11 @@ class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
     private val cache = object : LruCache<Key, Bitmap>(min(Runtime.getRuntime().maxMemory() / 6, 48L * 1024 * 1024).toInt()) {
         override fun sizeOf(key: Key, value: Bitmap) = value.byteCount
     }
-    private val empty = Collections.synchronizedSet(HashSet<Key>())
+    private val failed = ConcurrentHashMap<Key, Long>()   // Zeitpunkt des letzten Fehlschlags
     private val loading = Collections.synchronizedSet(HashSet<Key>())
     private val queue = LinkedBlockingDeque<Key>()
+    /** Auch Kacheln im DWD-Gebiet laden (Ersatz, wenn der DWD nicht liefert). */
+    @Volatile var includeDwd = false
     private val stamps = java.util.ArrayDeque<Long>()
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 200 }
     private val a = Point()
@@ -774,7 +899,7 @@ class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
             // Kachel liegt komplett im DWD-Gebiet? Dann nicht laden.
             val lonW = Tiles.lonOf(x.toDouble(), z); val lonE = Tiles.lonOf(x + 1.0, z)
             val latN = Tiles.latOf(y.toDouble(), z); val latS = Tiles.latOf(y + 1.0, z)
-            if (RadarOverlay.inDwd(latN, lonW) && RadarOverlay.inDwd(latN, lonE) && RadarOverlay.inDwd(latS, lonW) &&
+            if (!includeDwd && RadarOverlay.inDwd(latN, lonW) && RadarOverlay.inDwd(latN, lonE) && RadarOverlay.inDwd(latS, lonW) &&
                 RadarOverlay.inDwd(latS, lonE) && RadarOverlay.inDwd((latN + latS) / 2, (lonW + lonE) / 2)) continue
             out.add(Key(rt, z, x, y))
         }
@@ -789,10 +914,12 @@ class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
         for (i in 1 until dwdFrames.size) for (j in listOf(current + i, current - i)) {
             if (j in dwdFrames.indices) timeFor(dwdFrames[j])?.let { if (it !in order) order.add(it) }
         }
-        for (t in order) for (k in visible(t)) if (cache.get(k) == null && k !in empty && k !in loading) queue.offer(k)
+        val now = System.currentTimeMillis()
+        for (t in order) for (k in visible(t))
+            if (cache.get(k) == null && k !in loading && now - (failed[k] ?: 0L) > 15_000) queue.offer(k)
     }
 
-    fun ready(t: Long): Boolean { val rt = timeFor(t) ?: return true; return visible(rt).all { cache.get(it) != null || it in empty } }
+    fun ready(t: Long): Boolean { val rt = timeFor(t) ?: return true; return visible(rt).all { cache.get(it) != null } }
 
     private fun throttle() {
         while (alive) {
@@ -812,7 +939,7 @@ class WorldRadar(private val map: MapView, private val onLoaded: () -> Unit) {
             val path = frames.firstOrNull { it.first == k.time }?.second ?: return
             val bytes = Net.getBytes("$host$path/512/${k.z}/${k.x}/${k.y}/2/1_1.png", 15000)
             val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-            if (bmp == null) empty.add(k) else cache.put(k, bmp)
+            if (bmp == null) failed[k] = System.currentTimeMillis() else { cache.put(k, bmp); failed.remove(k) }
         } finally {
             loading.remove(k)
         }

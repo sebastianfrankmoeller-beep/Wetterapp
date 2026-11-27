@@ -217,12 +217,12 @@ object Net {
         con.readTimeout = timeoutMs
         con.setRequestProperty("User-Agent", UA)
         return try {
-            if (con.responseCode !in 200..299) null
+            if (con.responseCode !in 200..299) { con.disconnect(); null }
+            // Nach Erfolg nicht trennen: Die Verbindung wird für den nächsten Abruf wiederverwendet.
             else con.inputStream.use { it.readBytes() }
         } catch (e: Exception) {
-            null
-        } finally {
             con.disconnect()
+            null
         }
     }
 
