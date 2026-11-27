@@ -1,3 +1,7 @@
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +19,9 @@ android {
         // damit neue Builds als Update über die alte App installiert werden können.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        // Baudatum für die Versionsanzeige in den Einstellungen
+        resValue("string", "build_date",
+            LocalDate.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy")))
     }
 
     // Fester Debug-Schlüssel im Repository: Alle Builds sind identisch signiert,

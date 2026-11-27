@@ -463,7 +463,13 @@ class SettingsActivity : Activity() {
         add(card(*repRows.toTypedArray()), 24)
 
         add(note("Daten: Open-Meteo (DWD ICON-D2, ECMWF IFS), Deutscher Wetterdienst (Radar, Warnungen). " +
-            "Karten © OpenStreetMap-Mitwirkende."), 0)
+            "Karten © OpenStreetMap-Mitwirkende."), 16)
+
+        // Installierter Stand, damit er sich eindeutig nennen lässt
+        val version = packageManager.getPackageInfo(packageName, 0).versionName
+        add(Ui.tv(this, "Version $version  ·  ${getString(R.string.build_date)}", 14f, p.text, true).apply {
+            gravity = Gravity.CENTER
+        }, 0)
     }
 
     private fun levelHint(l: Int) = when (l) {
